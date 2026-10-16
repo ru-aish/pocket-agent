@@ -7,10 +7,11 @@ import { nativeTools,subagentTool,speakToUserTool } from './tools.js';
 import {memoryTools,recallBlock,MEMORY_GUIDANCE,MEMORY_TOOL_NAMES} from './memory.js';
 import { messageText } from './scripted.js';
 import { modelFor,makeStream } from './provider.js';
+import { discoverProviderModels, type CatalogModel } from './model-catalog.js';
 import { registerCodexCredentialUpdater,redactProviderSecrets,hasPendingCodexRefresh } from './codex-auth.js';
 
-const MAIN_PROMPT=`You are the user's persistent phone assistant. Delegate substantial multi-step phone navigation, screenshots and computer use promptly to phone-operator using subagent spawn. Give a concise assignment, relevant facts, outcome and verification criteria. End your turn after async dispatch, remain available and let the host deliver completion. Do not poll workers or block main with join on unfinished work. Use speak_to_user only when an unsolicited spoken announcement is warranted or requested; worker completion alone must not cause speech. The tool queues audio, not confirmed delivery. You may do a genuinely short lookup directly. Never claim requested/dispatched actions prove outcomes. Read phone_capabilities before mutation. Use its operation_prefix plus an underscore and a unique 8..48 character nonce (ASCII letters, digits, underscore or hyphen) for each mutation. Include owner/generation/action/attempt or a timestamp for uniqueness; a valid suffix example is _type_0001, never reuse the example across actions; inspect phone_operation after uncertain outcomes and reuse the same ID/arguments. Prefer direct APIs, then app actions, accessibility, screenshot fallback. Virtual displays are acquired automatically on UI tools; do not acquire a display for SMS, calls or direct APIs. Release the virtual display when the UI phase is finished. Main Stop does not stop workers.`;
-const WORKER_PROMPT=`You are a bounded phone operator worker. Complete the assignment using the granted direct native tools, verify actual outcome, report evidence and uncertainties. Read phone_capabilities first. Never invent unavailable permissions or task success. Prefer APIs, then app actions, accessibility and image/gesture fallback. Virtual screens are allocated automatically for UI tools, with a FIFO queue if all three are occupied. Never request a display for native-only actions (SMS, calls, contacts, calendars). Release a display after the UI phase is complete; waiting for a display is not a task failure. Use fresh observations and honor display ownership. Mutations require operation_prefix plus underscore and a unique 8..48 character nonce containing only ASCII letters, digits, underscore or hyphen. Include owner/generation/action/attempt or a timestamp for uniqueness; a valid suffix example is _type_0001, never reuse the example across actions; preserve operation IDs across uncertain retries and inspect receipts before repeating. A phone_act STALE_OBSERVATION with dispatch_status=not_dispatched permits reobserving and replanning with a new operation ID; do not reuse the recorded ID with changed arguments. RESULT_UNKNOWN never permits blind replay. Use speak_to_user only for useful or requested audio, never automatically on completion; queued is not delivered. Recursive delegation is available with a shared concurrency cap. Join child dependencies, and return concise verified results. If interrupted after process death inspect app state/receipts before any side-effect replay.`;
+const MAIN_PROMPT=`You are the user's persistent phone assistant. Delegate substantial multi-step phone navigation, screenshots and computer use promptly to phone-operator using subagent spawn. Your model is the user's chosen main chat model; never change it through delegation. For a worker needing a different model, call subagent action=models to see the current provider catalog, then set spawns[].model to a listed id. Select smaller models for straightforward tasks and more capable models for difficult tasks, but do not invent prices or capabilities. If a model cannot call required tools, retry with a suitable listed model. Give a concise assignment, relevant facts, outcome and verification criteria. End your turn after async dispatch, remain available and let the host deliver completion. Do not poll workers or block main with join on unfinished work. Use speak_to_user only when an unsolicited spoken announcement is warranted or requested; worker completion alone must not cause speech. The tool queues audio, not confirmed delivery. You may do a genuinely short lookup directly. Never claim requested/dispatched actions prove outcomes. Read phone_capabilities before mutation. Use its operation_prefix plus an underscore and a unique 8..48 character nonce (ASCII letters, digits, underscore or hyphen) for each mutation. Include owner/generation/action/attempt or a timestamp for uniqueness; a valid suffix example is _type_0001, never reuse the example across actions; inspect phone_operation after uncertain outcomes and reuse the same ID/arguments. Prefer direct APIs, then app actions, accessibility, screenshot fallback. Virtual displays are acquired automatically on UI tools; do not acquire a display for SMS, calls or direct APIs. Release the virtual display when the UI phase is finished. Main Stop does not stop workers.`;
+const WORKER_PROMPT=`You are a bounded phone operator worker. Complete the assignment using the granted direct native tools, verify actual outcome, report evidence and uncertainties. Read phone_capabilities first. Never invent unavailable permissions or task success. Prefer APIs, then app actions, accessibility and image/gesture fallback. Virtual screens are allocated automatically for UI tools, with a FIFO queue if all three are occupied. Never request a display for native-only actions (SMS, calls, contacts, calendars). Release a display after the UI phase is complete; waiting for a display is not a task failure. Use fresh observations and honor display ownership. Mutations require operation_prefix plus underscore and a unique 8..48 character nonce containing only ASCII letters, digits, underscore or hyphen. Include owner/generation/action/attempt or a timestamp for uniqueness; a valid suffix example is _type_0001, never reuse the example across actions; preserve operation IDs across uncertain retries and inspect receipts before repeating. A phone_act STALE_OBSERVATION with dispatch_status=not_dispatched permits reobserving and replanning with a new operation ID; do not reuse the recorded ID with changed arguments. RESULT_UNKNOWN never permits blind replay. Use speak_to_user only for useful or requested audio, never automatically on completion; queued is not delivered. Recursive delegation is available with a shared concurrency cap. You may choose any discovered provider model for each nested spawn by first using subagent action=models (paginate with offset/limit or filter with query); leave model absent to inherit the main model. Join child dependencies, and return concise verified results. If interrupted after process death inspect app state/receipts before any side-effect replay.`;
 const stripImages=(messages:any[])=>messages.map(m=>({...m,content:Array.isArray(m.content)?m.content.map((c:any)=>c.type==='image'?{type:'text',text:'[Previous screenshot omitted; observe again for current state]'}:c):m.content}));
 const textMessages=(messages:any[],sanitize=(text:string)=>text)=>messages.filter(m=>m.role==='user'||m.role==='assistant').map((m,i)=>({id:`${m.timestamp}-${i}`,role:m.role,text:messageText(m)||(m.stopReason==='error'?`Request failed: ${sanitize(m.errorMessage??'Provider request failed')}`:''),timestamp:m.timestamp,...(m.stopReason?{stopReason:m.stopReason}:{}),...(m.errorMessage?{error:sanitize(m.errorMessage)}:{})})).filter(m=>m.text);
 const normalizeMode=(mode:string)=>mode==='api-key'?'openai':mode==='codex-relay'||mode==='codexRelay'?'codex':mode;
@@ -45,6 +46,10 @@ export class PocketRuntime {
   private observing=false;
   private observerSession?:MobileSession;
   private readonly credentialHistory=new Set<any>();
+  private catalogPending?:Promise<CatalogModel[]>;
+  private discoveringModels=false;
+  private cachedModels?:{at:number,models:CatalogModel[]};
+  private catalogEpoch=0;
   private redact=(text:string)=>{for(const credentials of this.credentialHistory)text=redactProviderSecrets(text,credentials);return text;};
   private sanitize=(text:string)=>this.redact(text).slice(0,2000);
   readonly reportError=(e:any)=>{this.lastError=this.sanitize(String(e?.message??e));this.emit({type:'error',error:this.lastError});};
@@ -69,9 +74,12 @@ export class PocketRuntime {
     this.observationPending=Array.isArray(saved.observationPending)?saved.observationPending.filter((x:any)=>typeof x==='string').slice(0,6):[];
     this.lastError=saved.lastError?this.sanitize(String(saved.lastError)):null;
     this.main=this.createSession('main',undefined,saved.mainMessages??[]);
-    for(const snapshot of saved.workers??[]) {
+    const savedProviderMatches=typeof saved.providerRevision==='string' && saved.providerRevision===this.credentials.providerRevision;
+    for(const stored of saved.workers??[]) {
+      const snapshot:any=savedProviderMatches?stored:{...stored,requestedConfig:{...(stored.requestedConfig??{})}};
+      if(!savedProviderMatches)delete snapshot.requestedConfig.model;
       try {
-        const session=this.createSession(snapshot.conversationId,undefined,saved.workerMessages?.[snapshot.conversationId]??[]);
+        const session=this.createSession(snapshot.conversationId,snapshot,saved.workerMessages?.[snapshot.conversationId]??[]);
         this.runtime.restoreCheckpoint(snapshot,session as any);
         // Restore the recursive tool owner now the retained Conversation exists.
         const owner=this.runtime.generationCaller({conversationId:snapshot.conversationId,generation:snapshot.generations.at(-1).generation}).conversation;
@@ -108,12 +116,29 @@ export class PocketRuntime {
     registerCodexCredentialUpdater(this.credentials,args=>this.call('credentials.updateCodex',args),()=>this.coalesce());
     this.config={mode:normalizeMode(this.credentials.authMode??'scripted'),endpoint:this.credentials.endpoint,model:this.credentials.model};
   }
+  async refreshModels(force=false):Promise<CatalogModel[]> {
+    if(!force && this.cachedModels && Date.now()-this.cachedModels.at<5*60_000)return this.cachedModels.models;
+    if(this.catalogPending)return this.catalogPending;
+    const epoch=this.catalogEpoch, config=this.config, credentials=this.credentials;
+    this.discoveringModels=true;this.publish();
+    const pending=discoverProviderModels(config,credentials).then(models=>{
+      if(epoch!==this.catalogEpoch)throw new Error('Provider changed during model discovery; try again.');
+      this.context.modelRegistry=Object.fromEntries(models.map(m=>[m.id,modelFor(config,credentials,m.id)]));
+      this.cachedModels={at:Date.now(),models};
+      return models;
+    }).finally(()=>{
+      if(this.catalogPending===pending)this.catalogPending=undefined;
+      this.discoveringModels=false;this.publish();
+    });
+    this.catalogPending=pending;
+    return pending;
+  }
   private configureSessionTools(session:MobileSession,parent?:any):void {
     const grant=parent?.requestedConfig.tools??parent?.definition.tools;
     session.agent.state.tools=[...nativeTools(this,session.owner,grant),...memoryTools(this,session.owner,grant),...(!grant||grant.includes('speak_to_user')?[speakToUserTool(this,session.owner)]:[]),...(!grant||grant.includes('subagent')?[subagentTool(this,parent)]:[])];
   }
   private createSession(owner:string,parent?:any,messages:any[]=[]):MobileSession {
-    const session=new MobileSession(owner,this.config,this.credentials,[],messages,(parent?.definition.systemPrompt??(owner==='main'?MAIN_PROMPT:WORKER_PROMPT))+'\n'+MEMORY_GUIDANCE);
+    const session=new MobileSession(owner,this.config,this.credentials,[],messages,(parent?.definition?.systemPrompt??(owner==='main'?MAIN_PROMPT:WORKER_PROMPT))+'\n'+MEMORY_GUIDANCE,parent?.requestedConfig?.model);
     this.configureSessionTools(session,parent);
     session.subscribe(event=>{
       if(event.type==='message_end')this.coalesce();
@@ -132,7 +157,7 @@ export class PocketRuntime {
       if(!session)throw new Error('Missing saved worker session');
       this.configureSessionTools(session,conversation);this.sessions.set(conversation.conversationId,session);
       conversation.bindSession(generation,session);
-      conversation.setEffectiveConfig({cwd:'.',model:this.context.model.id,skills:[],tools:session.agent.state.tools.map((x:any)=>x.name)});
+      conversation.setEffectiveConfig({cwd:'.',model:session.agent.state.model.id,skills:[],tools:session.agent.state.tools.map((x:any)=>x.name)});
       const abort=()=>void session?.abort();signal?.addEventListener('abort',abort,{once:true});
       try {this.injectMemory(session,conversation.conversationId,generation.prompt);await session.prompt(generation.prompt);} finally {signal?.removeEventListener('abort',abort);}
       const last=session.messages.at(-1);
@@ -251,17 +276,31 @@ export class PocketRuntime {
         const own=this.runtime.generationCaller({conversationId:cmd.conversationId,generation:snapshot.generations.at(-1)!.generation});
         if(own.generation.state.kind==='done')own.conversation.markCollected(own.generation,'user');
         this.emit({type:'worker',conversationId:cmd.conversationId,snapshot,messages:textMessages(this.sessions.get(cmd.conversationId)?.messages??[],this.sanitize)});
+      } else if(cmd.action==='list_models') {
+        if(typeof cmd.requestId!=='string'||!/^[A-Za-z0-9_-]{1,64}$/.test(cmd.requestId))throw new Error('Invalid model discovery request ID');
+        const requestId=cmd.requestId;
+        void this.refreshModels(true).then(models=>this.emit({type:'models',requestId,models}))
+          .catch(error=>this.emit({type:'models',requestId,error:this.sanitize(String(error?.message??error))}));
       } else if(cmd.action==='configure') {
         if(this.busy||this.runtime.listConversations().some(c=>c.currentGeneration))throw new Error('Stop active work before changing providers');
+        const previous=this.config, previousAccount=this.credentials.accountId, previousApiKey=this.credentials.apiKey, previousRevision=this.credentials.providerRevision;
         this.reloadCredentials();
         if(cmd.config)this.config={...this.config,...{mode:cmd.config.mode??this.config.mode,model:cmd.config.model??this.config.model,endpoint:cmd.config.endpoint??this.config.endpoint}};
+        this.catalogEpoch++;
+        this.cachedModels=undefined;
+        this.context.modelRegistry={};
         this.context.model=modelFor(this.config,this.credentials);
         this.main=this.createSession('main',undefined,this.main.messages);
-        // Existing sessions keep transcript but use fresh shared provider settings.
+        const sameCredential=previousRevision!==undefined||this.credentials.providerRevision!==undefined
+          ? previousRevision===this.credentials.providerRevision : previousApiKey===this.credentials.apiKey;
+        const sameProvider=previous.mode===this.config.mode && previous.endpoint===this.config.endpoint && previousAccount===this.credentials.accountId && previousApiKey===this.credentials.apiKey && sameCredential;
+        // Resume a worker with its pinned model only while the provider credential identity is unchanged.
         for(const c of this.runtime.listConversations()) {
           const session=this.sessions.get(c.conversationId)!;
           session.agent.streamFunction=makeStream(this.config,this.credentials,session.owner);
-          session.agent.state.model=this.context.model;
+          if(!sameProvider)this.runtime.clearRequestedModel(c.conversationId);
+          const requested=sameProvider?c.requestedConfig?.model:undefined;
+          session.agent.state.model=modelFor(this.config,this.credentials,requested);
         }
       } else if(cmd.action!=='state')throw new Error(`Unknown action ${cmd.action}`);
       this.save();this.publish();return JSON.stringify({ok:true,accepted:true});
@@ -349,11 +388,11 @@ export class PocketRuntime {
     if(this.restoring)return;
     const workerMessages:any={};
     for(const [id,s] of this.sessions)workerMessages[id]=stripImages(s.messages);
-    this.call('store.save',{state:{version:1,config:this.config,busy:this.busy,lastError:this.lastError,mainPaused:this.mainPaused,totalStarts:this.totalStarts,mainMessages:stripImages(this.main.messages),workers:this.runtime.listConversations(),workerMessages,inbox:this.inbox,delivered:[...this.delivered],mainTurns:this.mainTurns,observationPending:this.observationPending}});
+    this.call('store.save',{state:{version:1,config:this.config,providerRevision:this.credentials.providerRevision,busy:this.busy,lastError:this.lastError,mainPaused:this.mainPaused,totalStarts:this.totalStarts,mainMessages:stripImages(this.main.messages),workers:this.runtime.listConversations(),workerMessages,inbox:this.inbox,delivered:[...this.delivered],mainTurns:this.mainTurns,observationPending:this.observationPending}});
   }
   state():any {
     const tasks=this.runtime.listConversations().map(c=>{const g=c.generations.at(-1)!;return {...c,generation:g.generation,status:g.status.kind==='done'?({error:'failed',aborted:'cancelled',skipped:'cancelled'} as any)[g.status.outcome]??g.status.outcome:g.status.kind,output:g.status.kind==='done'?g.status.output:undefined};});
-    return {messages:textMessages(this.main.messages,this.sanitize),tasks,busy:this.busy,lastError:this.lastError,active:hasPendingCodexRefresh(this.credentials)||this.observing||this.busy||tasks.some(t=>t.currentGeneration||t.isStopping)||(!this.mainPaused&&this.inbox.length>0)||Boolean(this.pendingSave),mainPaused:this.mainPaused,mainInterrupted:this.mainInterrupted,provider:{...this.config},mainTurns:this.mainTurns,
+    return {messages:textMessages(this.main.messages,this.sanitize),tasks,busy:this.busy,lastError:this.lastError,active:this.discoveringModels||hasPendingCodexRefresh(this.credentials)||this.observing||this.busy||tasks.some(t=>t.currentGeneration||t.isStopping)||(!this.mainPaused&&this.inbox.length>0)||Boolean(this.pendingSave),mainPaused:this.mainPaused,mainInterrupted:this.mainInterrupted,provider:{...this.config},mainTurns:this.mainTurns,
       workerMessages:Object.fromEntries([...this.sessions].map(([id,s])=>[id,textMessages(s.messages,this.sanitize)]))};
   }
   publish():void {if(!this.restoring){const state=this.state();this.emit({type:'state',state});this.emit({type:'activity',active:state.active});}}

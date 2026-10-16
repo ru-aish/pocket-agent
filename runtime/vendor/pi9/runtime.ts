@@ -120,6 +120,7 @@ export class SubagentRuntime {
     return depth;
   }
   conversation(conversationId: string): ConversationSnapshot { return this.requireConversation(conversationId).snapshot(); }
+  clearRequestedModel(conversationId: string): void { this.requireConversation(conversationId).clearRequestedModel(); }
   subagentStatus(conversationId: string): SubagentStatus { return projectSubagentStatus(this.requireConversation(conversationId).generationHistory.at(-1)!.status); }
 
   projectSubagent(conversationId: string, caller?: SubagentCaller, failureMode: FailureProjectionMode = "full"): CanonicalLiveSubagent {

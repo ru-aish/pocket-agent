@@ -10,9 +10,9 @@ export class MobileSession {
   private steering:string[]=[];
   private turns=0;
   private calls=0;
-  constructor(readonly owner:string, config:any, credentials:any, tools:any[], messages:any[]=[] ,systemPrompt='') {
+  constructor(readonly owner:string, config:any, credentials:any, tools:any[], messages:any[]=[] ,systemPrompt='', selectedModel?:string) {
     this.agent=new Agent({streamFn:makeStream(config,credentials,owner),initialState:{
-      model:modelFor(config,credentials),systemPrompt,tools,messages,
+      model:modelFor(config,credentials,selectedModel),systemPrompt,tools,messages,
     },toolExecution:'sequential',sessionId:owner,
       beforeToolCall:()=>{if(++this.calls>MOBILE_SESSION_BUDGET.toolCallsPerGeneration)throw new Error(`Mobile tool-call budget reached (${MOBILE_SESSION_BUDGET.toolCallsPerGeneration} per generation); saved context was retained`);return undefined;},
       finishTurn:()=>{if(++this.turns>MOBILE_SESSION_BUDGET.turnsPerGeneration)throw new Error(`Mobile generation turn budget reached (${MOBILE_SESSION_BUDGET.turnsPerGeneration}); saved context was retained`);if(this.full())throw new Error('Mobile saved conversation context limit reached; saved context was retained');return undefined;},

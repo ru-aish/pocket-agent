@@ -9,6 +9,7 @@ import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyStore;
 import java.security.MessageDigest;
+import java.util.UUID;
 import javax.crypto.Cipher;
 import javax.crypto.KeyGenerator;
 import javax.crypto.SecretKey;
@@ -22,6 +23,7 @@ public final class CredentialStore {
     private static final Object LOCK = new Object();
     public static final String CODEX_ACCOUNT = "codex-account";
     public static final String CODEX_MODEL = "gpt-6-luna";
+    private static final String BUILTIN_PROVIDER_REVISION = "builtin-scripted-v1";
     private final Context context;
     public CredentialStore(Context context) { this.context = context.getApplicationContext(); }
     private SecretKey key() throws Exception {
@@ -32,10 +34,14 @@ public final class CredentialStore {
                 .setBlockModes(KeyProperties.BLOCK_MODE_GCM).setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE).build());
         return generator.generateKey();
     }
-    public JSONObject get() throws Exception { synchronized (LOCK) { return read(); } }
+    public JSONObject get() throws Exception { synchronized (LOCK) {
+        JSONObject current = read();
+        if (!current.has("providerRevision")) { current.put("providerRevision", UUID.randomUUID().toString()); write(current); }
+        return current;
+    } }
     private JSONObject read() throws Exception {
         String saved = context.getSharedPreferences("provider-secrets", Context.MODE_PRIVATE).getString("encrypted", null);
-        if (saved == null) return new JSONObject().put("authMode", "scripted").put("endpoint", "https://api.openai.com/v1").put("model", "gpt-4.1-mini");
+        if (saved == null) return new JSONObject().put("authMode", "scripted").put("endpoint", "https://api.openai.com/v1").put("model", "gpt-4.1-mini").put("providerRevision", BUILTIN_PROVIDER_REVISION);
         JSONObject envelope = new JSONObject(saved);
         Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
         cipher.init(Cipher.DECRYPT_MODE, key(), new GCMParameterSpec(128, Base64.decode(envelope.getString("iv"), Base64.NO_WRAP)));
@@ -50,18 +56,21 @@ public final class CredentialStore {
     }
     public void save(JSONObject settings) throws Exception {
         synchronized (LOCK) {
+            JSONObject current = read();
             String mode = settings.optString("authMode"); validateEndpoint(settings.optString("endpoint"), mode);
             JSONObject allowed = new JSONObject().put("authMode", mode);
             if (CODEX_ACCOUNT.equals(mode)) {
-                JSONObject source = settings.has("accessToken") ? settings : read();
+                JSONObject source = settings.has("accessToken") ? settings : current;
                 if (!CODEX_ACCOUNT.equals(source.optString("authMode")) && !settings.has("accessToken")) throw new IllegalArgumentException("Sign in or import an account first");
                 JSONObject account = CodexAccountAuth.validateCredentials(source, false);
                 for (String field : new String[]{"accessToken", "refreshToken", "accountId", "expiresAt", "idToken"})
                     if (account.has(field)) allowed.put(field, account.get(field));
                 allowed.put("model", model(settings.optString("model", CODEX_MODEL)));
             } else {
-                for (String field : new String[]{"endpoint", "model", "apiKey"}) allowed.put(field, settings.optString(field));
+                for (String field : new String[]{"endpoint", "apiKey"}) allowed.put(field, settings.optString(field));
+                allowed.put("model", model(settings.optString("model")));
             }
+            allowed.put("providerRevision", providerRevision(current, allowed));
             write(allowed);
         }
     }
@@ -79,6 +88,8 @@ public final class CredentialStore {
             JSONObject allowed = new JSONObject().put("authMode", CODEX_ACCOUNT).put("model", model(current.optString("model", CODEX_MODEL)));
             for (String field : new String[]{"accessToken", "refreshToken", "accountId", "expiresAt", "idToken"})
                 if (account.has(field)) allowed.put(field, account.get(field));
+            String revision = current.optString("providerRevision");
+            allowed.put("providerRevision", revision.isEmpty() ? UUID.randomUUID().toString() : revision);
             write(allowed);
             return new JSONObject(allowed.toString());
         }
@@ -86,11 +97,26 @@ public final class CredentialStore {
     public void signOutCodex() throws Exception {
         synchronized (LOCK) {
             JSONObject current = read();
-            if (CODEX_ACCOUNT.equals(current.optString("authMode"))) write(new JSONObject().put("authMode", "scripted").put("model", "scripted").put("endpoint", "https://api.openai.com/v1"));
+            if (CODEX_ACCOUNT.equals(current.optString("authMode"))) write(new JSONObject().put("authMode", "scripted").put("model", "scripted").put("endpoint", "https://api.openai.com/v1").put("providerRevision", UUID.randomUUID().toString()));
         }
     }
+    private static boolean sameProviderIdentity(JSONObject left, JSONObject right) {
+        String mode = left.optString("authMode");
+        if (!mode.equals(right.optString("authMode"))) return false;
+        if (CODEX_ACCOUNT.equals(mode)) {
+            String accountId = left.optString("accountId");
+            return !accountId.isEmpty() && accountId.equals(right.optString("accountId"));
+        }
+        if ("scripted".equals(mode)) return true;
+        if (!left.optString("endpoint").equals(right.optString("endpoint"))) return false;
+        return MessageDigest.isEqual(left.optString("apiKey").getBytes(StandardCharsets.UTF_8), right.optString("apiKey").getBytes(StandardCharsets.UTF_8));
+    }
+    private static String providerRevision(JSONObject current, JSONObject next) {
+        String revision = current.optString("providerRevision");
+        return !revision.isEmpty() && sameProviderIdentity(current, next) ? revision : UUID.randomUUID().toString();
+    }
     private static String model(String value) {
-        if (value == null || !value.matches("[A-Za-z0-9._:-]{1,120}")) throw new IllegalArgumentException("Enter a valid model name");
+        if (value == null || !value.matches("[A-Za-z0-9._:/+@-]{1,160}")) throw new IllegalArgumentException("Enter a valid model name");
         return value;
     }
     public static void validateEndpoint(String endpoint, String authMode) throws Exception {

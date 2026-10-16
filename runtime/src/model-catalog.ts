@@ -1,0 +1,72 @@
+import { modelFor, type ProviderConfig, type ProviderCredentials } from './provider.js';
+import { ensureCodexCredentials } from './codex-auth.js';
+
+export interface CatalogModel { id: string; name: string }
+const CODEX_MODELS_URL = 'https://chatgpt.com/backend-api/codex/models?client_version=0.130.0';
+const MAX_CATALOG_BYTES = 512 * 1024;
+const MODEL_ID = /^[A-Za-z0-9._:/+@-]{1,160}$/;
+
+/** Fetches provider-advertised models, never an inferred or hard-coded allowlist. */
+export async function discoverProviderModels(
+  config: ProviderConfig,
+  credentials: ProviderCredentials,
+  fetcher: typeof fetch = globalThis.fetch,
+): Promise<CatalogModel[]> {
+  if (config.mode === 'scripted') return [{id: 'scripted', name: 'Scripted model'}];
+  const current = modelFor(config, credentials); // Validates scheme/host/credential-free base URL.
+  const account = current.api === 'openai-codex-responses';
+  const auth = account ? await ensureCodexCredentials(credentials) : null;
+  const token = account ? auth!.accessToken : credentials.apiKey;
+  if (!token?.trim()) throw new Error('Save a provider credential before discovering models.');
+  const url = account ? CODEX_MODELS_URL : current.baseUrl.replace(/\/$/, '') + '/models';
+  const headers: Record<string,string> = {Accept: 'application/json', Authorization: 'Bearer ' + token};
+  if (account) headers['ChatGPT-Account-Id'] = auth!.accountId;
+  let response: Response;
+  try {
+    response = await fetcher(url, {method:'GET', headers, redirect:'error', signal:AbortSignal.timeout(15000)});
+  } catch {
+    throw new Error('Provider model discovery could not connect.');
+  }
+  if (!response.ok) {
+    await response.body?.cancel();
+    throw new Error('Provider model discovery rejected the request (HTTP ' + response.status + ').');
+  }
+  const length = Number(response.headers.get('content-length'));
+  if (length > MAX_CATALOG_BYTES) {await response.body?.cancel();throw new Error('Provider model catalog exceeds size limit.');}
+  if (!response.body) throw new Error('Provider model catalog was empty.');
+  const chunks: Uint8Array[] = [];
+  const reader = response.body.getReader();
+  let count = 0;
+  try {
+    while (true) {
+      const next = await reader.read();
+      if (next.done) break;
+      count += next.value.byteLength;
+      if (count > MAX_CATALOG_BYTES) throw new Error('Provider model catalog exceeds size limit.');
+      chunks.push(next.value);
+    }
+  } catch (error) {
+    await reader.cancel().catch(()=>{});
+    if (error instanceof Error && error.message.includes('size limit')) throw error;
+    throw new Error('Provider model catalog could not be read.');
+  }
+  let body: any;
+  try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  catch { throw new Error('Provider returned an invalid model catalog.'); }
+  // Standard OpenAI-compatible APIs use data[].id; Codex uses models[].slug.
+  const entries = Array.isArray(body?.data) ? body.data : body?.models;
+  if (!Array.isArray(entries)) throw new Error('Provider does not expose a supported model catalog.');
+  const seen = new Set<string>();
+  const models: CatalogModel[] = [];
+  for (const entry of entries) {
+    if (!entry || typeof entry !== 'object' || entry.supported_in_api === false || entry.visibility === 'hide') continue;
+    const id = entry.id ?? entry.slug;
+    if (typeof id !== 'string' || !MODEL_ID.test(id) || seen.has(id)) continue;
+    seen.add(id);
+    const display = entry.display_name ?? entry.name;
+    models.push({id, name: typeof display === 'string' && display.trim() && display.length <= 120 ? display : id});
+    if (models.length >= 1024) break;
+  }
+  if (!models.length) throw new Error('Provider returned no usable model identifiers.');
+  return models;
+}

@@ -42,6 +42,9 @@ public final class MainActivity extends Activity implements AgentService.Observe
     private JSONObject state = new JSONObject();
     private String viewedWorker;
     private String deferredUserMessage;
+    private Spinner modelPicker;
+    private String modelRequestId;
+    private String[] modelIds = {};
     private StateStore store;
     private static final int IMPORT_CODEX = 90;
     private final ExecutorService accountFiles = Executors.newSingleThreadExecutor();
@@ -111,6 +114,25 @@ public final class MainActivity extends Activity implements AgentService.Observe
     @Override public void onAgentEvent(JSONObject event) {
         String type = event.optString("type");
         if (type.equals("state")) { state = event.optJSONObject("state"); if (state == null) state = new JSONObject(); render(); }
+        else if (type.equals("models") && modelPicker != null && event.optString("requestId").equals(modelRequestId)) {
+            String failure = event.optString("error");
+            if (!failure.isEmpty()) { toast(failure); return; }
+            JSONArray models = event.optJSONArray("models");
+            if (models == null) { toast("Provider returned no model list"); return; }
+            String[] labels = new String[models.length() + 1];
+            modelIds = new String[models.length() + 1];
+            labels[0] = "Select discovered main model";
+            for (int i = 0; i < models.length(); i++) {
+                JSONObject entry = models.optJSONObject(i);
+                String id = entry == null ? "" : entry.optString("id");
+                modelIds[i + 1] = id;
+                String name = entry == null ? id : entry.optString("name", id);
+                labels[i + 1] = name.equals(id) ? id : name + " (" + id + ")";
+            }
+            modelPicker.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, labels));
+            modelPicker.setSelection(0);
+            toast("Discovered " + models.length() + " models");
+        }
         else if (type.equals("error")) { status.setText("Error · " + event.optString("error", "Runtime unavailable")); }
         else if (type.equals("voice_delivery_error")) { status.setText("Voice error · " + event.optString("error", "Unable to start speech")); }
         else if (type.equals("stopped")) {
@@ -182,9 +204,38 @@ public final class MainActivity extends Activity implements AgentService.Observe
         mode.setSelection(selected); panel.addView(mode);
         LinearLayout endpointPanel = column(); panel.addView(endpointPanel);
         EditText endpoint = field(endpointPanel, "API endpoint", saved.optString("endpoint", "https://api.openai.com/v1")); endpoint.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
-        EditText model = field(panel, "Model", saved.optString("model", selected == 3 ? CredentialStore.CODEX_MODEL : "gpt-4.1-mini"));
+        EditText model = field(panel, "Main chat model ID (editable fallback)", saved.optString("model", selected == 3 ? CredentialStore.CODEX_MODEL : "gpt-4.1-mini"));
+        Spinner picker = new Spinner(this);
+        modelPicker = picker;
+        picker.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, new String[]{"Tap Discover models to choose"}));
+        picker.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                if (position > 0 && position < modelIds.length && modelIds[position] != null)
+                    model.setText(modelIds[position]);
+            }
+            @Override public void onNothingSelected(AdapterView<?> parent) { }
+        });
+        panel.addView(picker);
+        final EditText[] newKey = new EditText[1];
+        panel.addView(button("Discover models", () -> {
+            if (activeWork()) { toast("Finish active work before discovering models"); return; }
+            String selectedMode = modes[mode.getSelectedItemPosition()];
+            String savedMode = saved.optString("authMode");
+            boolean sameMode = selectedMode.equals(savedMode)
+                    || (selectedMode.equals("openai") && savedMode.equals("api-key"))
+                    || (selectedMode.equals("codex") && (savedMode.equals("codexRelay") || savedMode.equals("codex-relay")));
+            if (!sameMode
+                    || (!selectedMode.equals(CredentialStore.CODEX_ACCOUNT) && !endpoint.getText().toString().trim().equals(saved.optString("endpoint")))
+                    || (newKey[0] != null && newKey[0].getText().length() > 0)) {
+                toast("Save your provider connection, then reopen Settings to discover its models");
+                return;
+            }
+            modelRequestId = Long.toHexString(System.nanoTime());
+            command(json("action", "list_models", "requestId", modelRequestId));
+        }));
         LinearLayout secretPanel = column(); panel.addView(secretPanel);
         EditText secret = field(secretPanel, "API key / relay token (blank keeps saved value)", ""); secret.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        newKey[0] = secret;
         secret.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS); secret.setSaveEnabled(false);
         LinearLayout accountPanel = column(); panel.addView(accountPanel);
         String accountStatus = "No account connected";
@@ -307,7 +358,11 @@ public final class MainActivity extends Activity implements AgentService.Observe
                     credentials.save(config); invalidateAccountOperations(); if (AgentService.isRunning()) command(json("action", "configure")); dialog.dismiss(); toast("Connection saved");
                 } catch (Exception error) { toast(error instanceof IllegalArgumentException ? error.getMessage() : "Could not save connection"); }
             });
-        }); dialog.show();
+        });
+        dialog.setOnDismissListener(ignored -> {
+            if (modelPicker == picker) { modelPicker = null; modelRequestId = null; modelIds = new String[0]; }
+        });
+        dialog.show();
     }
     private void voiceKeySettings() {
         EditText key = new EditText(this);

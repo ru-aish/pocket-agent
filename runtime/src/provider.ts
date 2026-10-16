@@ -25,7 +25,7 @@ function accountMode(config: ProviderConfig, credentials: ProviderCredentials): 
 function isRelay(config: ProviderConfig, credentials: ProviderCredentials): boolean {
   return ['codex', 'codexRelay', 'codex-relay'].includes(credentials.authMode || config.mode || '');
 }
-export function modelFor(config: ProviderConfig, credentials: ProviderCredentials = {}): ProviderModel {
+export function modelFor(config: ProviderConfig, credentials: ProviderCredentials = {}, override?: string): ProviderModel {
   if (config.mode === 'scripted') return SCRIPT_MODEL;
   const account = accountMode(config, credentials), relay = isRelay(config, credentials);
   if (account && (config.endpoint || credentials.endpoint)) throw new Error('Codex account inference uses a fixed provider endpoint; remove the endpoint override.');
@@ -35,8 +35,8 @@ export function modelFor(config: ProviderConfig, credentials: ProviderCredential
   if (relay) {
     if (url.protocol !== 'http:' || !['10.0.2.2', '127.0.0.1', 'localhost'].includes(url.hostname)) throw new Error('Codex relay is restricted to the Android emulator host or loopback.');
   } else if (url.protocol !== 'https:') throw new Error('Direct API providers require HTTPS.');
-  const id = credentials.model || config.model || (account ? 'gpt-6-luna' : 'gpt-6-sol');
-  if (!/^[a-zA-Z0-9._:-]{1,120}$/.test(id)) throw new Error('Invalid model identifier.');
+  const id = override || credentials.model || config.model || (account ? 'gpt-6-luna' : 'gpt-6-sol');
+  if (!/^[a-zA-Z0-9._:/+@-]{1,160}$/.test(id)) throw new Error('Invalid model identifier.');
   return {
     id, name: id, provider: account ? 'openai-codex' : 'openai', api: account ? 'openai-codex-responses' : 'openai-responses',
     baseUrl: url.toString().replace(/\/$/, ''), input: ['text', 'image'],
@@ -92,7 +92,7 @@ export function makeStream(config: ProviderConfig, credentials: ProviderCredenti
     let model: ProviderModel | undefined;
     const account = accountMode(config,credentials);
     try {
-      model = modelFor(config,credentials);
+      model = modelFor(config,credentials,_model?.id);
       if (options?.signal?.aborted) return failure(model,'Request cancelled.',true);
       let apiKey = credentials.apiKey;
       if (account) apiKey = (await ensureCodexCredentials(credentials,{signal:options?.signal,fetch:options?.fetch})).accessToken;

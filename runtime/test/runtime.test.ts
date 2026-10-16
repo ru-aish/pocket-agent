@@ -34,10 +34,10 @@ test('Pi validates the full mutation ID contract before dispatch; historical rec
 
 test('mobile spawn schema omits unsupported overrides while upstream actions and inherited grants stay intact',()=>{
  const mobile:any=MobileSubagentParams,upstream:any=SubagentParams;
- assert.deepEqual(Object.keys(mobile.properties.spawns.items.properties).sort(),['agent','label','prompt']);
+ assert.deepEqual(Object.keys(mobile.properties.spawns.items.properties).sort(),['agent','label','model','prompt']);
  assert.deepEqual(mobile.properties.spawns.items.required,['agent','prompt','label']);
  assert.equal(mobile.properties.spawns.items.additionalProperties,false);
- for(const field of ['cwd','model','skills','thinking'])assert.ok(field in upstream.properties.spawns.items.properties,'upstream schema must remain unmodified');
+ for(const field of ['cwd','skills','thinking'])assert.ok(field in upstream.properties.spawns.items.properties,'upstream schema must remain unmodified');
  for(const field of Object.keys(upstream.properties).filter(x=>x!=='spawns'))assert.deepEqual(mobile.properties[field],upstream.properties[field]);
  assert.ok(!('error' in parseSubagentInvocation({action:'spawn',spawns:[{agent:'phone-operator',label:'Upstream contract',prompt:'Read state',model:'configured-model',cwd:'.',skills:[],thinking:'off'}]})));
  const runtime=new PocketRuntime(new Bridge());
@@ -369,7 +369,6 @@ test('voice input streams only its own main reply; ordinary turns and worker com
  assert.ok(!bridge.events.some(e=>e.type.startsWith('voice_')),'reject unscoped voice output');
 });
 
-
 test('registered speak_to_user tool requests optional speech without asserting delivery or speaking after worker completion',async()=>{
  const bridge=new Bridge(), runtime=new PocketRuntime(bridge);
  const main=runtime.main.agent.state.tools.find((tool:any)=>tool.name==='speak_to_user');
@@ -395,4 +394,50 @@ test('registered speak_to_user tool requests optional speech without asserting d
  const controller=new AbortController();controller.abort();
  await assert.rejects(tool.execute('speak4',{message:'No',listen_after:true},controller.signal),/cancelled/);
  assert.equal(bridge.events.filter(e=>e.type==='voice_announce').length,2);
+});
+
+test('a discovered worker model is pinned across execution and restore without changing the selected main model',async()=>{
+ const originalFetch=globalThis.fetch;
+ const wireModels:string[]=[];
+ const bridge=new Bridge();
+ bridge.credentials={authMode:'openai',endpoint:'https://api.example.test/v1',model:'main-strong',apiKey:'synthetic-api-key',providerRevision:'provider-a'};
+ globalThis.fetch=(async(input:any,init?:RequestInit)=>{
+   if(String(input).endsWith('/models'))return Response.json({data:[{id:'worker/fast'},{id:'worker/strong'}]});
+   const request=JSON.parse(String(init?.body));wireModels.push(request.model);
+   const event={type:'response.completed',response:{id:'resp_worker',status:'completed',output:[],usage:{input_tokens:1,output_tokens:0,total_tokens:1,input_tokens_details:{cached_tokens:0}}}};
+   return new Response('event: response.completed\\ndata: '+JSON.stringify(event)+'\\n\\n',{headers:{'content-type':'text/event-stream'}});
+ }) as typeof fetch;
+ try {
+   const runtime=new PocketRuntime(bridge);
+   assert.equal(runtime.main.agent.state.model.id,'main-strong');
+   const rejected=runtime.startTasks([{kind:'spawn',agent:'researcher',label:'Unknown model',prompt:'Read status',model:'other/unknown'}],{initiatedBy:'user'});
+   assert.equal(rejected.starts[0].ok,false);
+   command(runtime,{action:'list_models',requestId:'catalog_123'});
+   await until(()=>bridge.events.some(e=>e.type==='models'&&e.requestId==='catalog_123'));
+   assert.deepEqual(bridge.events.find(e=>e.type==='models')?.models.map((m:any)=>m.id),['worker/fast','worker/strong']);
+   const handle=runtime.startTasks([{kind:'spawn',agent:'researcher',label:'Cheap status',prompt:'Read status',model:'worker/fast'}],{initiatedBy:'user'});
+   assert.equal(handle.starts[0].ok,true);
+   await handle.completion;
+   const task=runtime.state().tasks[0];
+   assert.equal(task.effectiveConfig.model,'worker/fast');
+   assert.equal(runtime.sessions.get(task.conversationId)?.agent.state.model.id,'worker/fast');
+   assert.equal(runtime.main.agent.state.model.id,'main-strong');
+   assert.deepEqual(wireModels,['worker/fast']);
+   const stateWithPinnedWorker=structuredClone(bridge.state);
+   const restored=new PocketRuntime(bridge);
+   assert.equal(restored.main.agent.state.model.id,'main-strong');
+   assert.equal(restored.sessions.get(task.conversationId)?.agent.state.model.id,'worker/fast');
+   const stoppedBridge=new Bridge();
+   stoppedBridge.state=structuredClone(stateWithPinnedWorker);
+   stoppedBridge.credentials={...bridge.credentials,apiKey:'rotated-api-key',providerRevision:'provider-b'};
+   const restartedAfterCredentialChange=new PocketRuntime(stoppedBridge);
+   assert.equal(restartedAfterCredentialChange.sessions.get(task.conversationId)?.agent.state.model.id,'main-strong','restart under a new credential drops the old worker model');
+   assert.equal(restartedAfterCredentialChange.state().tasks[0].requestedConfig.model,undefined,'restart clears the stale requested model');
+   assert.equal(stoppedBridge.state.workers[0].requestedConfig.model,undefined,'restart persists the cleared model state');
+   bridge.credentials={...bridge.credentials,apiKey:'rotated-api-key',providerRevision:'provider-b'};
+   command(restored,{action:'configure'});
+   assert.equal(restored.sessions.get(task.conversationId)?.agent.state.model.id,'main-strong','live credential changes drop the old worker model');
+   assert.equal(restored.state().tasks[0].requestedConfig.model,undefined,'live worker state clears the stale model');
+   assert.equal(bridge.state.workers[0].requestedConfig.model,undefined,'saved worker state cannot restore the old provider model');
+ } finally {globalThis.fetch=originalFetch;}
 });

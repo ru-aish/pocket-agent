@@ -5,7 +5,7 @@ import { isSubagentId, type SubagentId } from "./identifiers.js";
 
 export { isModelThinkingLevel, MODEL_THINKING_LEVELS } from "./agents.js";
 
-export const SUBAGENT_ACTIONS = ["agents", "list", "spawn", "resume", "steer", "cancel", "inspect", "join", "remove"] as const;
+export const SUBAGENT_ACTIONS = ["agents", "models", "list", "spawn", "resume", "steer", "cancel", "inspect", "join", "remove"] as const;
 export const SUBAGENT_STATUSES = ["queued", "running", "completed", "failed", "cancelled"] as const;
 
 export const SpawnTaskSchema = Type.Object({
@@ -33,6 +33,9 @@ export const SubagentParams = Type.Object({
   statuses: Type.Optional(Type.Array(StringEnum(SUBAGENT_STATUSES), { minItems: 1 })),
   collected: Type.Optional(Type.Boolean()),
   spawns: Type.Optional(Type.Array(SpawnTaskSchema, { minItems: 1 })),
+  query: Type.Optional(Type.String({maxLength:120})),
+  offset: Type.Optional(Type.Integer({minimum:0})),
+  limit: Type.Optional(Type.Integer({minimum:1,maximum:100})),
   resumes: Type.Optional(Type.Array(ResumeTaskSchema, { minItems: 1 })),
   messages: Type.Optional(Type.Array(SteerMessageSchema, { minItems: 1 })),
   subagentIds: Type.Optional(Type.Array(Type.String(), { minItems: 1 })),
@@ -66,6 +69,7 @@ export type ParsedSteerRequest = SteerRequest | { error: string; subagentId?: st
 
 export type SubagentInvocation =
   | { action: "agents" }
+  | { action: "models"; query?: string; offset?: number; limit?: number }
   | { action: "list"; statuses?: SubagentStatus[]; collected?: boolean }
   | { action: "spawn"; spawns: ParsedSpawnRequest[] }
   | { action: "resume"; resumes: ParsedResumeRequest[] }
@@ -94,6 +98,7 @@ const ACTION_LIST = `${SUBAGENT_ACTIONS.slice(0, -1).map(action => `"${action}"`
 
 const allowedInvocationKeys: Record<SubagentAction, readonly string[]> = {
   agents: ["action"],
+  models: ["action","query","offset","limit"],
   list: ["action", "statuses", "collected"],
   spawn: ["action", "spawns"],
   resume: ["action", "resumes"],
@@ -140,6 +145,12 @@ export function parseSubagentInvocation(
 
   switch (parsedAction) {
     case "agents": return { action: parsedAction };
+    case "models": {
+      if(params.query !== undefined && (typeof params.query !== 'string'||params.query.length>120)) return {action:parsedAction,error:'Invalid model query'};
+      if(params.offset !== undefined && (!Number.isSafeInteger(params.offset)||Number(params.offset)<0)) return {action:parsedAction,error:'Invalid model offset'};
+      if(params.limit !== undefined && (!Number.isSafeInteger(params.limit)||Number(params.limit)<1||Number(params.limit)>100)) return {action:parsedAction,error:'Model limit must be 1..100'};
+      return {action:parsedAction,query:params.query as string|undefined,offset:params.offset as number|undefined,limit:params.limit as number|undefined};
+    }
     case "list": {
       const invalidStatuses = params.statuses !== undefined && (
         !Array.isArray(params.statuses)

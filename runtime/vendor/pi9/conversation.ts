@@ -306,6 +306,7 @@ export class Conversation {
       && this.hasRetainedResumableSession;
   }
   get isStopping(): boolean { return this.stopping !== undefined; }
+  clearRequestedModel(): void { delete (this.requestedConfig as { model?: string }).model; }
 
   private newGeneration(number: number, prompt: string, initiatedBy: GenerationInitiator, startedInParentGeneration?: number): Generation {
     return new Generation(number, prompt, initiatedBy, update => this.listener(this, update), startedInParentGeneration);

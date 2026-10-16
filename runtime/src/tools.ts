@@ -6,7 +6,7 @@ import { SubagentParams, parseSubagentInvocation } from '../vendor/pi9/schema.js
 // Keep upstream parsing/contracts intact; advertise only mobile-supported spawn
 // inputs. Agent selection still determines the recursively inherited tool grant.
 const mobileSpawn:any={...SubagentParams.properties.spawns.items,properties:{...SubagentParams.properties.spawns.items.properties}};
-const unsupportedSpawnOverrides=['cwd','model','skills','thinking'];
+const unsupportedSpawnOverrides=['cwd','skills','thinking'];
 for(const field of unsupportedSpawnOverrides)delete mobileSpawn.properties[field];
 if(mobileSpawn.required)mobileSpawn.required=mobileSpawn.required.filter((field:string)=>!unsupportedSpawnOverrides.includes(field));
 export const MobileSubagentParams=Type.Unsafe({...SubagentParams,properties:{...SubagentParams.properties,spawns:{...SubagentParams.properties.spawns,items:mobileSpawn}}});
@@ -88,13 +88,20 @@ export function speakToUserTool(host:any,owner:string):any {
 
 export function subagentTool(app:any,parent?:any):any {
   const owner=()=>parent?{conversation:parent,generation:parent.requireCurrentGeneration()}:undefined;
-  return {name:'subagent',label:'Subagent',description:'Delegate asynchronously. spawn returns immediately. End your turn and remain available; host delivers completion. inspect does not collect. join collects; use only for explicit dependencies. resume requires the initiator collection receipt. Tools are inherited by children.',parameters:MobileSubagentParams,
+  return {name:'subagent',label:'Subagent',description:'Use action=models to discover provider models, then specify a listed model in spawns[].model for an independent worker. Omitting model inherits the main model. Delegate asynchronously. spawn returns immediately. End your turn and remain available; host delivers completion. inspect does not collect. join collects; use only for explicit dependencies. resume requires the initiator collection receipt. Tools are inherited by children.',parameters:MobileSubagentParams,
     execute:async(id:string,params:any,signal?:AbortSignal)=>{
       const invocation=parseSubagentInvocation(params,{maxTasks:4});
       if('error' in invocation) return toolResult({action:params.action,error:invocation.error});
       const r=app.runtime,caller=owner(), action=invocation.action;
       let results:any[]=[];
       switch(action) {
+        case 'models': {
+          const all=await app.refreshModels();
+          const matches=invocation.query?all.filter((model:any)=>(model.id+' '+model.name).toLowerCase().includes(invocation.query!.toLowerCase())):all;
+          const offset=invocation.offset??0,limit=invocation.limit??100;
+          results=[{total:matches.length,offset,models:matches.slice(offset,offset+limit),nextOffset:offset+limit<matches.length?offset+limit:null}];
+          break;
+        }
         case 'agents': results=[...app.registry.agents.values()].map((x:any)=>({name:x.name,description:x.description,tools:x.tools}));break;
         case 'list': results=r.queryConversations(parent?.conversationId).filter((x:any)=>{
           const g=x.generations.at(-1),status=r.subagentStatus(x.conversationId);
