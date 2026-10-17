@@ -137,12 +137,17 @@ test('OpenCode and Nebius are fixed Chat Completions providers',()=>{
  assert.equal(open.api,'openai-completions');
  assert.equal(open.provider,'opencode');
  assert.equal(open.baseUrl,'https://opencode.ai/inference/openai/v1');
- const nebius=modelFor({mode:'nebius',model:'Qwen/Qwen3-30B-A3B'},{authMode:'nebius',apiKey:'secret',model:'Qwen/Qwen3-30B-A3B'});
+ const nebius=modelFor({mode:'nebius',model:'zai-org/GLM-5.3-Flash'},{authMode:'nebius',apiKey:'secret',model:'zai-org/GLM-5.3-Flash'});
  assert.equal(nebius.api,'openai-completions');
  assert.equal(nebius.provider,'nebius');
- assert.equal(nebius.baseUrl,'https://api.studio.nebius.ai/v1');
+ assert.equal(nebius.baseUrl,'https://api.tokenfactory.nebius.com/v1');
+ assert.deepEqual(nebius.input,['text','image']);
+ const textOnly=modelFor({mode:'nebius',model:'Qwen/Qwen3-30B-A3B-Instruct-2507'},{authMode:'nebius',apiKey:'secret',model:'Qwen/Qwen3-30B-A3B-Instruct-2507'});
+ assert.deepEqual(textOnly.input,['text']);
+ const vl=modelFor({mode:'nebius',model:'Qwen/Qwen3-VL-30B-A3B'},{authMode:'nebius',apiKey:'secret',model:'Qwen/Qwen3-VL-30B-A3B'});
+ assert.deepEqual(vl.input,['text','image']);
  assert.throws(()=>modelFor({mode:'opencode',endpoint:'https://evil.test',model:'big-pickle'},{authMode:'opencode'}),/fixed API endpoint/);
- assert.throws(()=>modelFor({mode:'nebius',endpoint:'https://evil.test',model:'Qwen\/Qwen3-30B-A3B'},{authMode:'nebius',apiKey:'secret'}),/fixed API endpoint/);
+ assert.throws(()=>modelFor({mode:'nebius',endpoint:'https://evil.test',model:'zai-org/GLM-5.3-Flash'},{authMode:'nebius',apiKey:'secret'}),/fixed API endpoint/);
 });
 
 test('OpenCode refuses inference until an external Console key is configured',async()=>{
@@ -158,7 +163,7 @@ test('OpenCode refuses inference until an external Console key is configured',as
 test('keyed OpenCode and Nebius inference send the configured bearer credential',async()=>{
  const cases=[
    {config:{mode:'opencode' as const,model:'beam-free'},credentials:{authMode:'opencode',apiKey:'oc_sk_test_external',model:'beam-free'},url:'https://opencode.ai/inference/openai/v1/chat/completions',key:'oc_sk_test_external'},
-   {config:{mode:'nebius' as const,model:'Qwen/Qwen3-30B-A3B'},credentials:{authMode:'nebius',apiKey:'nebius-secret',model:'Qwen/Qwen3-30B-A3B'},url:'https://api.studio.nebius.ai/v1/chat/completions',key:'nebius-secret'},
+   {config:{mode:'nebius' as const,model:'zai-org/GLM-5.3-Flash'},credentials:{authMode:'nebius',apiKey:'nebius-secret',model:'zai-org/GLM-5.3-Flash'},url:'https://api.tokenfactory.nebius.com/v1/chat/completions',key:'nebius-secret'},
  ];
  for(const item of cases) {
    let authorization:string|null=null;
