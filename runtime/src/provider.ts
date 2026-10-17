@@ -21,7 +21,14 @@ export interface ProviderCredentials extends CodexCredentialInput {
 }
 type ProviderModel = Model<'openai-responses'> | Model<'openai-codex-responses'> | Model<'openai-completions'>;
 export const OPENCODE_BASE_URL = 'https://opencode.ai/inference/openai/v1';
-export const NEBIUS_BASE_URL = 'https://api.studio.nebius.ai/v1';
+export const NEBIUS_BASE_URL = 'https://api.tokenfactory.nebius.com/v1';
+function providerInput(mode: string, id: string): Array<'text'|'image'> {
+  const normalized = id.toLowerCase();
+  const vision = /(^|[/._-])(vl|vision|omni)([/._-]|$)/.test(normalized)
+    || normalized === 'zai-org/glm-5.3-flash'
+    || normalized === 'glm-5.3-flash-free';
+  return vision ? ['text','image'] : ['text'];
+}
 function accountMode(config: ProviderConfig, credentials: ProviderCredentials): boolean {
   return (credentials.authMode || config.mode) === 'codex-account';
 }
@@ -45,12 +52,12 @@ export function modelFor(config: ProviderConfig, credentials: ProviderCredential
   if (relay) {
     if (url.protocol !== 'http:' || !['10.0.2.2', '127.0.0.1', 'localhost'].includes(url.hostname)) throw new Error('Codex relay is restricted to the Android emulator host or loopback.');
   } else if (url.protocol !== 'https:') throw new Error('Direct API providers require HTTPS.');
-  const id = override || credentials.model || config.model || (account ? 'gpt-6-luna' : mode === 'opencode' ? 'big-pickle' : mode === 'nebius' ? 'Qwen/Qwen3-30B-A3B' : 'gpt-6-sol');
+  const id = override || credentials.model || config.model || (account ? 'gpt-6-luna' : mode === 'opencode' ? 'big-pickle' : mode === 'nebius' ? 'zai-org/GLM-5.3-Flash' : 'gpt-6-sol');
   if (!/^[a-zA-Z0-9._:/+@-]{1,160}$/.test(id)) throw new Error('Invalid model identifier.');
   if (mode === 'opencode' || mode === 'nebius') {
     return {
       id, name: id, provider: mode, api: 'openai-completions',
-      baseUrl: url.toString().replace(/\/$/, ''), input: ['text', 'image'],
+      baseUrl: url.toString().replace(/\/$/, ''), input: providerInput(mode,id),
       reasoning: true, contextWindow: 128000, maxTokens: 4096,
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       compat: { supportsDeveloperRole: false },
