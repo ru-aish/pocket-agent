@@ -23,6 +23,12 @@ public final class CredentialStore {
     private static final Object LOCK = new Object();
     public static final String CODEX_ACCOUNT = "codex-account";
     public static final String CODEX_MODEL = "gpt-6-luna";
+    public static final String OPENCODE = "opencode";
+    public static final String OPENCODE_ENDPOINT = "https://opencode.ai/inference/openai/v1";
+    public static final String OPENCODE_MODEL = "big-pickle";
+    public static final String NEBIUS = "nebius";
+    public static final String NEBIUS_ENDPOINT = "https://api.studio.nebius.ai/v1";
+    public static final String NEBIUS_MODEL = "Qwen/Qwen3-30B-A3B";
     private static final String BUILTIN_PROVIDER_REVISION = "builtin-scripted-v1";
     private final Context context;
     public CredentialStore(Context context) { this.context = context.getApplicationContext(); }
@@ -57,7 +63,11 @@ public final class CredentialStore {
     public void save(JSONObject settings) throws Exception {
         synchronized (LOCK) {
             JSONObject current = read();
-            String mode = settings.optString("authMode"); validateEndpoint(settings.optString("endpoint"), mode);
+            String mode = settings.optString("authMode");
+            String endpoint = fixedEndpoint(mode, settings.optString("endpoint"));
+            validateEndpoint(endpoint, mode);
+            if (OPENCODE.equals(mode) && settings.optString("apiKey").trim().isEmpty()) throw new IllegalArgumentException("Enter an OpenCode Console service-account key");
+            if (NEBIUS.equals(mode) && settings.optString("apiKey").trim().isEmpty()) throw new IllegalArgumentException("Enter a Nebius API key");
             JSONObject allowed = new JSONObject().put("authMode", mode);
             if (CODEX_ACCOUNT.equals(mode)) {
                 JSONObject source = settings.has("accessToken") ? settings : current;
@@ -67,7 +77,8 @@ public final class CredentialStore {
                     if (account.has(field)) allowed.put(field, account.get(field));
                 allowed.put("model", model(settings.optString("model", CODEX_MODEL)));
             } else {
-                for (String field : new String[]{"endpoint", "apiKey"}) allowed.put(field, settings.optString(field));
+                allowed.put("endpoint", endpoint);
+                allowed.put("apiKey", settings.optString("apiKey"));
                 allowed.put("model", model(settings.optString("model")));
             }
             allowed.put("providerRevision", providerRevision(current, allowed));
@@ -119,9 +130,14 @@ public final class CredentialStore {
         if (value == null || !value.matches("[A-Za-z0-9._:/+@-]{1,160}")) throw new IllegalArgumentException("Enter a valid model name");
         return value;
     }
+    private static String fixedEndpoint(String authMode, String endpoint) {
+        if (OPENCODE.equals(authMode)) return OPENCODE_ENDPOINT;
+        if (NEBIUS.equals(authMode)) return NEBIUS_ENDPOINT;
+        return endpoint;
+    }
     public static void validateEndpoint(String endpoint, String authMode) throws Exception {
         if (authMode.equals("scripted") || authMode.equals(CODEX_ACCOUNT)) return;
-        if (!authMode.equals("openai") && !authMode.equals("api-key") && !authMode.equals("codex") && !authMode.equals("codexRelay") && !authMode.equals("codex-relay")) throw new IllegalArgumentException("Unknown authentication mode");
+        if (!authMode.equals("openai") && !authMode.equals("api-key") && !authMode.equals(OPENCODE) && !authMode.equals(NEBIUS) && !authMode.equals("codex") && !authMode.equals("codexRelay") && !authMode.equals("codex-relay")) throw new IllegalArgumentException("Unknown authentication mode");
         URI uri;
         try { uri = new URI(endpoint); } catch (Exception invalid) { throw new IllegalArgumentException("Enter a valid API base URL"); }
         if (uri.getUserInfo() != null || uri.getFragment() != null || uri.getQuery() != null || uri.getHost() == null)
