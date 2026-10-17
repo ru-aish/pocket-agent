@@ -78,21 +78,21 @@ test('OpenCode discovery uses the fixed catalog, permits anonymous reads and exp
    ]});
  });
  assert.deepEqual(models,[{id:'big-pickle',name:'big-pickle'},{id:'beam-free',name:'beam-free'},{id:'nemotron-3.5-lightning-free',name:'nemotron-3.5-lightning-free'}]);
- let sawKey=false;
+ let leaked=false;
  await discoverProviderModels(config,{...anonymous,apiKey:'opencode-secret'},async(_input,init)=>{
-   sawKey=new Headers(init?.headers).get('authorization')==='Bearer opencode-secret';
+   leaked=new Headers(init?.headers).has('authorization');
    return json({data:[{id:'beam-free'}]});
  });
- assert.equal(sawKey,true);
+ assert.equal(leaked,false,'OpenCode service-account keys must not be sent to the public catalog');
 });
 
 test('Nebius discovery uses its fixed OpenAI-compatible endpoint and bearer key',async()=>{
- const config={mode:'nebius' as const,model:'Qwen/Qwen3-30B-A3B'};
- const credentials={authMode:'nebius',apiKey:'nebius-secret',model:'Qwen/Qwen3-30B-A3B'};
+ const config={mode:'nebius' as const,model:'zai-org/GLM-5.3-Flash'};
+ const credentials={authMode:'nebius',apiKey:'nebius-secret',model:'zai-org/GLM-5.3-Flash'};
  const models=await discoverProviderModels(config,credentials,async(input,init)=>{
-   assert.equal(String(input),'https://api.studio.nebius.ai/v1/models');
+   assert.equal(String(input),'https://api.tokenfactory.nebius.com/v1/models');
    assert.equal(new Headers(init?.headers).get('authorization'),'Bearer nebius-secret');
-   return json({data:[{id:'Qwen/Qwen3-30B-A3B'}]});
+   return json({data:[{id:'zai-org/GLM-5.3-Flash'}]});
  });
- assert.deepEqual(models,[{id:'Qwen/Qwen3-30B-A3B',name:'Qwen/Qwen3-30B-A3B'}]);
+ assert.deepEqual(models,[{id:'zai-org/GLM-5.3-Flash',name:'zai-org/GLM-5.3-Flash'}]);
 });
