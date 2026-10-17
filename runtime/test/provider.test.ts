@@ -130,3 +130,54 @@ test('direct Codex bounds its streamed response and cancels an oversized body',a
  const result=await(await makeStream(accountConfig,credentials,'main')(modelFor(accountConfig,credentials),{messages:[]},{fetch:fetcher})).result();
  assert.equal(result.stopReason,'error');assert.equal(cancelled,true);
 });
+
+
+test('OpenCode and Nebius are fixed Chat Completions providers',()=>{
+ const open=modelFor({mode:'opencode',model:'big-pickle'},{authMode:'opencode',model:'big-pickle'});
+ assert.equal(open.api,'openai-completions');
+ assert.equal(open.provider,'opencode');
+ assert.equal(open.baseUrl,'https://opencode.ai/inference/openai/v1');
+ const nebius=modelFor({mode:'nebius',model:'Qwen/Qwen3-30B-A3B'},{authMode:'nebius',apiKey:'secret',model:'Qwen/Qwen3-30B-A3B'});
+ assert.equal(nebius.api,'openai-completions');
+ assert.equal(nebius.provider,'nebius');
+ assert.equal(nebius.baseUrl,'https://api.studio.nebius.ai/v1');
+ assert.throws(()=>modelFor({mode:'opencode',endpoint:'https://evil.test',model:'big-pickle'},{authMode:'opencode'}),/fixed API endpoint/);
+ assert.throws(()=>modelFor({mode:'nebius',endpoint:'https://evil.test',model:'Qwen\/Qwen3-30B-A3B'},{authMode:'nebius',apiKey:'secret'}),/fixed API endpoint/);
+});
+
+test('OpenCode refuses inference until an external Console key is configured',async()=>{
+ const config={mode:'opencode' as const,model:'big-pickle'};
+ const credentials={authMode:'opencode',apiKey:'',model:'big-pickle'};
+ let called=false;
+ const result=await(await makeStream(config,credentials,'main')(modelFor(config,credentials),{messages:[]},{fetch:async()=>{called=true;throw Error('unexpected');}})).result();
+ assert.equal(called,false);
+ assert.equal(result.stopReason,'error');
+ assert.match(result.errorMessage||'',/Console service-account key/);
+});
+
+test('keyed OpenCode and Nebius inference send the configured bearer credential',async()=>{
+ const cases=[
+   {config:{mode:'opencode' as const,model:'beam-free'},credentials:{authMode:'opencode',apiKey:'oc_sk_test_external',model:'beam-free'},url:'https://opencode.ai/inference/openai/v1/chat/completions',key:'oc_sk_test_external'},
+   {config:{mode:'nebius' as const,model:'Qwen/Qwen3-30B-A3B'},credentials:{authMode:'nebius',apiKey:'nebius-secret',model:'Qwen/Qwen3-30B-A3B'},url:'https://api.studio.nebius.ai/v1/chat/completions',key:'nebius-secret'},
+ ];
+ for(const item of cases) {
+   let authorization:string|null=null;
+   const fetcher:typeof fetch=async(input,init)=>{
+     assert.equal(String(input),item.url);
+     assert.equal(init?.redirect,'error');
+     const headers=new Headers(init?.headers);
+     authorization=headers.get('authorization');
+     assert.match(headers.get('content-type')||'',/^application\/json/);
+     if(item.config.mode==='opencode')assert.equal(headers.get('x-opencode-org-id'),null);
+     const chunks=[
+       {id:'chatcmpl-keyed',object:'chat.completion.chunk',created:1,model:item.credentials.model,choices:[{index:0,delta:{role:'assistant',content:'OK'},finish_reason:null}]},
+       {id:'chatcmpl-keyed',object:'chat.completion.chunk',created:1,model:item.credentials.model,choices:[{index:0,delta:{},finish_reason:'stop'}]},
+     ];
+     return new Response(chunks.map(x=>'data: '+JSON.stringify(x)+'\n\n').join('')+'data: [DONE]\n\n',{headers:{'content-type':'text/event-stream'}});
+   };
+   const stream=makeStream(item.config,item.credentials,'main');
+   const result=await(await stream(modelFor(item.config,item.credentials),{messages:[{role:'user',content:[{type:'text',text:'Say OK'}],timestamp:Date.now()}]},{fetch:fetcher})).result();
+   assert.equal(authorization,'Bearer '+item.key);
+   assert.equal(result.stopReason,'stop');
+ }
+});
