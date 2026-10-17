@@ -61,3 +61,38 @@ test('Codex account discovery uses fixed origin, account-scoped authorization an
  });
  assert.deepEqual(models,[{id:'codex-strong',name:'Strong'},{id:'codex-fast',name:'Fast'}]);
 });
+
+
+test('OpenCode discovery uses the fixed catalog, permits anonymous reads and exposes only free models',async()=>{
+ const config={mode:'opencode' as const,model:'big-pickle'};
+ const anonymous={authMode:'opencode',apiKey:'',model:'big-pickle'};
+ const models=await discoverProviderModels(config,anonymous,async(input,init)=>{
+   assert.equal(String(input),'https://opencode.ai/inference/v1/models');
+   assert.equal(new Headers(init?.headers).get('authorization'),null);
+   return json({data:[
+     {id:'big-pickle'},
+     {id:'beam-free'},
+     {id:'nemotron-3.5-lightning-free'},
+     {id:'gpt-6-sol'},
+     {id:'paid-model'},
+   ]});
+ });
+ assert.deepEqual(models,[{id:'big-pickle',name:'big-pickle'},{id:'beam-free',name:'beam-free'},{id:'nemotron-3.5-lightning-free',name:'nemotron-3.5-lightning-free'}]);
+ let sawKey=false;
+ await discoverProviderModels(config,{...anonymous,apiKey:'opencode-secret'},async(_input,init)=>{
+   sawKey=new Headers(init?.headers).get('authorization')==='Bearer opencode-secret';
+   return json({data:[{id:'beam-free'}]});
+ });
+ assert.equal(sawKey,true);
+});
+
+test('Nebius discovery uses its fixed OpenAI-compatible endpoint and bearer key',async()=>{
+ const config={mode:'nebius' as const,model:'Qwen/Qwen3-30B-A3B'};
+ const credentials={authMode:'nebius',apiKey:'nebius-secret',model:'Qwen/Qwen3-30B-A3B'};
+ const models=await discoverProviderModels(config,credentials,async(input,init)=>{
+   assert.equal(String(input),'https://api.studio.nebius.ai/v1/models');
+   assert.equal(new Headers(init?.headers).get('authorization'),'Bearer nebius-secret');
+   return json({data:[{id:'Qwen/Qwen3-30B-A3B'}]});
+ });
+ assert.deepEqual(models,[{id:'Qwen/Qwen3-30B-A3B',name:'Qwen/Qwen3-30B-A3B'}]);
+});
