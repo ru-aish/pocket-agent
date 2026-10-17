@@ -196,7 +196,7 @@ public final class MainActivity extends Activity implements AgentService.Observe
         try { saved = credentials.get(); } catch (Exception e) { toast("Unable to read protected credentials"); return; }
         LinearLayout panel = column(); panel.setPadding(dp(20), dp(4), dp(20), dp(8));
         panel.addView(text("Provider")); Spinner mode = new Spinner(this);
-        String[] names = {"Scripted model (local validation)", "API key (HTTPS)", "OpenCode Free (Console key)", "Nebius AI Studio", "Codex emulator relay (development)", "Codex account (ChatGPT)"};
+        String[] names = {"Scripted model (local validation)", "API key (HTTPS)", "OpenCode Free (Console key)", "Nebius Token Factory", "Codex emulator relay (development)", "Codex account (ChatGPT)"};
         String[] modes = {"scripted", "openai", CredentialStore.OPENCODE, CredentialStore.NEBIUS, "codex", CredentialStore.CODEX_ACCOUNT};
         mode.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, names));
         String auth = saved.optString("authMode");
@@ -269,7 +269,7 @@ public final class MainActivity extends Activity implements AgentService.Observe
             try { credentials.signOutCodex(); invalidateAccountOperations(); if (AgentService.isRunning()) command(json("action", "configure")); settingsDialog[0].dismiss(); toast("Account signed out on this phone"); }
             catch (Exception error) { toast("Unable to clear the protected account"); }
         }));
-        TextView connectionHelp = text("OpenCode Free uses OpenCode's fixed external inference API and requires a Console service-account key. Pocket Agent sends it only as Authorization: Bearer to opencode.ai; no OpenCode client identity headers are spoofed. Nebius AI Studio uses its fixed API endpoint and requires a Nebius key. Codex relay uses http://10.0.2.2:port/v1 on an emulator. Codex account mode needs no API key or endpoint."); panel.addView(connectionHelp);
+        TextView connectionHelp = text("OpenCode Free uses OpenCode's fixed external inference API and requires a Console service-account key. Pocket Agent sends it only as Authorization: Bearer to opencode.ai; no OpenCode client identity headers are spoofed. Nebius Token Factory uses its fixed API endpoint and requires a Nebius key; its default GLM-5.3-Flash supports vision and tool use. Codex relay uses http://10.0.2.2:port/v1 on an emulator. Codex account mode needs no API key or endpoint."); panel.addView(connectionHelp);
         java.util.function.IntConsumer renderProviderFields = position -> {
             String selectedMode = modes[position];
             boolean account = selectedMode.equals(CredentialStore.CODEX_ACCOUNT);
