@@ -2,6 +2,7 @@
 import type { StreamFn } from '@earendil-works/pi-agent-core';
 import type { AssistantMessage, Model } from '@earendil-works/pi-ai';
 import { streamSimple } from '@earendil-works/pi-ai/api/openai-responses';
+import { streamSimple as completionsStreamSimple } from '@earendil-works/pi-ai/api/openai-completions';
 import { streamSimple as codexStreamSimple } from '@earendil-works/pi-ai/api/openai-codex-responses';
 import { AssistantMessageEventStream } from '@earendil-works/pi-ai/utils/event-stream';
 import { SCRIPT_MODEL, scriptedStream } from './scripted.js';
@@ -9,7 +10,7 @@ import {CODEX_RESPONSES_URL,ensureCodexCredentials,redactProviderSecrets,type Co
 export {registerCodexCredentialUpdater,redactProviderSecrets} from './codex-auth.js';
 
 export interface ProviderConfig {
-  mode?: 'scripted' | 'openai' | 'codex' | 'codex-account';
+  mode?: 'scripted' | 'openai' | 'codex' | 'codex-account' | 'opencode' | 'nebius';
   endpoint?: string;
   model?: string;
 }
@@ -18,25 +19,43 @@ export interface ProviderCredentials extends CodexCredentialInput {
   model?: string;
   authMode?: string;
 }
-type ProviderModel = Model<'openai-responses'> | Model<'openai-codex-responses'>;
+type ProviderModel = Model<'openai-responses'> | Model<'openai-codex-responses'> | Model<'openai-completions'>;
+export const OPENCODE_BASE_URL = 'https://opencode.ai/inference/openai/v1';
+export const NEBIUS_BASE_URL = 'https://api.studio.nebius.ai/v1';
 function accountMode(config: ProviderConfig, credentials: ProviderCredentials): boolean {
   return (credentials.authMode || config.mode) === 'codex-account';
 }
+function selectedMode(config: ProviderConfig, credentials: ProviderCredentials): string {
+  return credentials.authMode || config.mode || 'openai';
+}
 function isRelay(config: ProviderConfig, credentials: ProviderCredentials): boolean {
-  return ['codex', 'codexRelay', 'codex-relay'].includes(credentials.authMode || config.mode || '');
+  return ['codex', 'codexRelay', 'codex-relay'].includes(selectedMode(config, credentials));
 }
 export function modelFor(config: ProviderConfig, credentials: ProviderCredentials = {}, override?: string): ProviderModel {
   if (config.mode === 'scripted') return SCRIPT_MODEL;
+  const mode = selectedMode(config, credentials);
   const account = accountMode(config, credentials), relay = isRelay(config, credentials);
   if (account && (config.endpoint || credentials.endpoint)) throw new Error('Codex account inference uses a fixed provider endpoint; remove the endpoint override.');
-  const endpoint = account ? CODEX_RESPONSES_URL : credentials.endpoint || config.endpoint || (relay ? 'http://10.0.2.2:8787/v1' : 'https://api.openai.com/v1');
+  const fixed = mode === 'opencode' ? OPENCODE_BASE_URL : mode === 'nebius' ? NEBIUS_BASE_URL : undefined;
+  const configured = credentials.endpoint || config.endpoint;
+  if (fixed && configured && configured.replace(/\/$/, '') !== fixed) throw new Error('This provider uses a fixed API endpoint.');
+  const endpoint = account ? CODEX_RESPONSES_URL : fixed || configured || (relay ? 'http://10.0.2.2:8787/v1' : 'https://api.openai.com/v1');
   const url = new URL(endpoint);
   if (url.username || url.password || url.search || url.hash) throw new Error('Provider endpoint must be a base URL without credentials, query or fragment.');
   if (relay) {
     if (url.protocol !== 'http:' || !['10.0.2.2', '127.0.0.1', 'localhost'].includes(url.hostname)) throw new Error('Codex relay is restricted to the Android emulator host or loopback.');
   } else if (url.protocol !== 'https:') throw new Error('Direct API providers require HTTPS.');
-  const id = override || credentials.model || config.model || (account ? 'gpt-6-luna' : 'gpt-6-sol');
+  const id = override || credentials.model || config.model || (account ? 'gpt-6-luna' : mode === 'opencode' ? 'big-pickle' : mode === 'nebius' ? 'Qwen/Qwen3-30B-A3B' : 'gpt-6-sol');
   if (!/^[a-zA-Z0-9._:/+@-]{1,160}$/.test(id)) throw new Error('Invalid model identifier.');
+  if (mode === 'opencode' || mode === 'nebius') {
+    return {
+      id, name: id, provider: mode, api: 'openai-completions',
+      baseUrl: url.toString().replace(/\/$/, ''), input: ['text', 'image'],
+      reasoning: true, contextWindow: 128000, maxTokens: 4096,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      compat: { supportsDeveloperRole: false },
+    };
+  }
   return {
     id, name: id, provider: account ? 'openai-codex' : 'openai', api: account ? 'openai-codex-responses' : 'openai-responses',
     baseUrl: url.toString().replace(/\/$/, ''), input: ['text', 'image'],
@@ -56,6 +75,19 @@ function failure(model: ProviderModel | undefined, text: string, aborted = false
   };
   stream.push({type:'error',reason:aborted ? 'aborted' : 'error',error:output});stream.end(output);return stream;
 }
+function fixedCompletionsFetch(mode: string, fetcher: typeof fetch): typeof fetch {
+  const expected = mode === 'opencode'
+    ? OPENCODE_BASE_URL + '/chat/completions'
+    : mode === 'nebius'
+      ? NEBIUS_BASE_URL + '/chat/completions'
+      : undefined;
+  if (!expected) return fetcher;
+  return (async(input: any, init?: RequestInit)=>{
+    if (String(input) !== expected) throw new Error('Unexpected fixed-provider inference destination.');
+    return fetcher(expected,{...init,redirect:'error'});
+  }) as typeof fetch;
+}
+
 function fixedCodexFetch(fetcher: typeof fetch, requestSignal?: AbortSignal): typeof fetch {
   return (async(input: any, init?: RequestInit)=>{
     if (String(input) !== CODEX_RESPONSES_URL) throw new Error('Unexpected Codex inference destination.');
@@ -91,11 +123,14 @@ export function makeStream(config: ProviderConfig, credentials: ProviderCredenti
   return async(_model, context, options)=>{
     let model: ProviderModel | undefined;
     const account = accountMode(config,credentials);
+    const mode = selectedMode(config,credentials);
     try {
       model = modelFor(config,credentials,_model?.id);
       if (options?.signal?.aborted) return failure(model,'Request cancelled.',true);
       let apiKey = credentials.apiKey;
       if (account) apiKey = (await ensureCodexCredentials(credentials,{signal:options?.signal,fetch:options?.fetch})).accessToken;
+      else if (mode === 'opencode' && !apiKey?.trim()) return failure(model,'Configure an OpenCode Console service-account key before sending.');
+      else if (mode === 'nebius' && !apiKey?.trim()) return failure(model,'Configure a Nebius API key before sending.');
       else if (!apiKey?.trim()) return failure(model,'Configure a provider credential before sending.');
       if (options?.signal?.aborted) return failure(model,'Request cancelled.',true);
       const shared = {...options,apiKey,transport:'sse' as const,maxRetries:0,timeoutMs:120000,reasoning:'low' as const};
@@ -109,7 +144,12 @@ export function makeStream(config: ProviderConfig, credentials: ProviderCredenti
                 ...(Array.isArray(body.tools) ? {tools:body.tools.map((tool:any)=>tool.type==='function'?{...tool,strict:false}:tool)} : {})};
             },
           })
-        : streamSimple(model,context,shared);
+        : model.api === 'openai-completions'
+          ? completionsStreamSimple(model,context,{
+              ...shared,
+              fetch:fixedCompletionsFetch(mode,options?.fetch ?? globalThis.fetch),
+            })
+          : streamSimple(model,context,shared);
       const guarded = new AssistantMessageEventStream();
       void(async()=>{
         try {
