@@ -3,6 +3,7 @@ import { ensureCodexCredentials } from './codex-auth.js';
 
 export interface CatalogModel { id: string; name: string }
 const CODEX_MODELS_URL = 'https://chatgpt.com/backend-api/codex/models?client_version=0.130.0';
+export const OPENCODE_MODELS_URL = 'https://opencode.ai/inference/v1/models';
 const MAX_CATALOG_BYTES = 512 * 1024;
 const MODEL_ID = /^[A-Za-z0-9._:/+@-]{1,160}$/;
 
@@ -15,11 +16,13 @@ export async function discoverProviderModels(
   if (config.mode === 'scripted') return [{id: 'scripted', name: 'Scripted model'}];
   const current = modelFor(config, credentials); // Validates scheme/host/credential-free base URL.
   const account = current.api === 'openai-codex-responses';
+  const mode = credentials.authMode || config.mode || 'openai';
   const auth = account ? await ensureCodexCredentials(credentials) : null;
   const token = account ? auth!.accessToken : credentials.apiKey;
-  if (!token?.trim()) throw new Error('Save a provider credential before discovering models.');
-  const url = account ? CODEX_MODELS_URL : current.baseUrl.replace(/\/$/, '') + '/models';
-  const headers: Record<string,string> = {Accept: 'application/json', Authorization: 'Bearer ' + token};
+  if (mode !== 'opencode' && !token?.trim()) throw new Error('Save a provider credential before discovering models.');
+  const url = account ? CODEX_MODELS_URL : mode === 'opencode' ? OPENCODE_MODELS_URL : current.baseUrl.replace(/\/$/, '') + '/models';
+  const headers: Record<string,string> = {Accept: 'application/json'};
+  if (token?.trim()) headers.Authorization = 'Bearer ' + token;
   if (account) headers['ChatGPT-Account-Id'] = auth!.accountId;
   let response: Response;
   try {
@@ -62,6 +65,7 @@ export async function discoverProviderModels(
     if (!entry || typeof entry !== 'object' || entry.supported_in_api === false || entry.visibility === 'hide') continue;
     const id = entry.id ?? entry.slug;
     if (typeof id !== 'string' || !MODEL_ID.test(id) || seen.has(id)) continue;
+    if (mode === 'opencode' && id !== 'big-pickle' && !id.endsWith('-free')) continue;
     seen.add(id);
     const display = entry.display_name ?? entry.name;
     models.push({id, name: typeof display === 'string' && display.trim() && display.length <= 120 ? display : id});
