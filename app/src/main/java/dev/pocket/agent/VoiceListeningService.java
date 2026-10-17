@@ -32,7 +32,9 @@ public final class VoiceListeningService extends Service implements AgentService
     private static final int NOTIFICATION_ID = 32;
     private static final String CHANNEL = "voice";
     private static final long IDLE_TIMEOUT_MS = 3000;
-    private static final long SYSTEM_FINAL_TIMEOUT_MS = 5000;
+    private static final long SYSTEM_RESULT_GRACE_MS = 1500;
+    private static final long SYSTEM_ENDPOINT_TIMEOUT_MS = 5000;
+    private static final long DEFAULT_ANDROID_FINAL_TIMEOUT_MS = 5000;
     private static final int MAX_PENDING_ANNOUNCEMENTS = 8;
     private static volatile VoiceListeningService runningService;
     static boolean isRunning() { return runningService != null; }
@@ -42,8 +44,11 @@ public final class VoiceListeningService extends Service implements AgentService
     private final ArrayDeque<VoiceAnnouncement> pendingAnnouncements = new ArrayDeque<>();
     private final LinkedHashSet<String> acceptedIds = new LinkedHashSet<>();
     private DeepgramVoice voice;
-    private AndroidDefaultSpeechRecognizer systemSpeech;
-    private VoiceSttSettings.Engine sttEngine = VoiceSttSettings.Engine.DEEPGRAM;
+    private AndroidShortSpeechRecognizer shortSpeech;
+    private AndroidDefaultSpeechRecognizer defaultSpeech;
+    private HybridTranscriptArbiter transcriptArbiter;
+    private VoiceSttSettings.Mode sttMode = VoiceSttSettings.Mode.HYBRID_THRESHOLD;
+    private long activeRecognitionCycle;
     private VoiceAnnouncement currentAnnouncement;
     private String activeTurn;
     private boolean responding, userSpeaking, started, keepListening, microphoneEnabled, streamingReady, wakeStarted;
@@ -55,18 +60,19 @@ public final class VoiceListeningService extends Service implements AgentService
             stopSelf();
         }
     };
-    private final Runnable restartSystemSpeech = () -> {
-        if (!started || sttEngine != VoiceSttSettings.Engine.ANDROID_DEFAULT
-                || !microphoneEnabled || responding || systemSpeech == null) return;
-        if (!startSystemRecognition()) stopSelf();
+    private Runnable systemResultFallback, deepgramDuplicateFallback;
+    private final Runnable restartDefaultSpeech = () -> {
+        if (!started || sttMode.usesDeepgramStt()
+                || !microphoneEnabled || responding || defaultSpeech == null) return;
+        if (!startDefaultSpeechRecognition()) stopSelf();
     };
-    private final Runnable systemFinalTimeout = () -> {
-        if (!started || sttEngine != VoiceSttSettings.Engine.ANDROID_DEFAULT
-                || responding || systemSpeech == null || !systemSpeech.isActive()) return;
-        systemSpeech.cancel();
+    private final Runnable defaultSpeechFinalTimeout = () -> {
+        if (!started || sttMode.usesDeepgramStt()
+                || responding || defaultSpeech == null || !defaultSpeech.isActive()) return;
+        defaultSpeech.cancel();
         streamingReady = false;
         userSpeaking = false;
-        scheduleSystemRecognitionRestart("Android speech result timed out · listening again");
+        scheduleDefaultSpeechRestart("Android speech result timed out · listening again");
     };
 
     @Override public void onCreate() {
@@ -105,17 +111,18 @@ public final class VoiceListeningService extends Service implements AgentService
             if (wakePreroll != null && wakePreroll.length > 0 && !microphoneEnabled) {
                 wakeStarted = true;
                 try {
-                    if (sttEngine == VoiceSttSettings.Engine.DEEPGRAM) {
+                    if (sttMode.usesDeepgramStt()) {
                         voice.primeWakePcm(wakePreroll);
+                        if (sttMode.usesHybridArbitration() && shortSpeech != null)
+                            shortSpeech.primePcm(wakePreroll);
                     } else {
-                        // SpeechRecognizer owns its microphone and cannot accept the wake PCM.
-                        // Cue the user once the system recognizer is actually ready instead of
-                        // silently losing words spoken during the microphone handoff.
+                        // The direct system recognizer cannot consume wake preroll. Cue the user
+                        // when it actually owns the microphone so the first command word is not lost.
                         systemWakeReadyCuePending = true;
                     }
-                } catch (RuntimeException invalid) {
-                    Log.w("PocketVoice", "Invalid wake audio preroll", invalid);
-                } finally { Arrays.fill(wakePreroll, (byte) 0); }
+                }
+                catch (RuntimeException invalid) { Log.w("PocketVoice", "Invalid wake audio preroll", invalid); }
+                finally { Arrays.fill(wakePreroll, (byte) 0); }
             }
             keepListening = true;
             if (!enableMicrophone()) {
@@ -158,7 +165,7 @@ public final class VoiceListeningService extends Service implements AgentService
             AgentService.reportVoiceFailure(this, requestId, "Android denied speech in the background");
             stopSelf(); return false;
         }
-        sttEngine = VoiceSttSettings.engine(this);
+        sttMode = VoiceSttSettings.mode(this);
         started = true;
         AgentService.observe(this);
         if (!AgentService.isRunning())
@@ -166,24 +173,47 @@ public final class VoiceListeningService extends Service implements AgentService
         voice = new DeepgramVoice(this, key, new DeepgramVoice.Callback() {
             @Override public void onUtterance(String text) {
                 main.post(() -> {
-                    if (sttEngine == VoiceSttSettings.Engine.DEEPGRAM) sendUtterance(text);
+                    if (sttMode.usesDeepgramStt())
+                        deepgramUtterance(text, -1L);
+                });
+            }
+            @Override public void onUtterance(String text, long spokenDurationMs) {
+                main.post(() -> {
+                    if (sttMode.usesDeepgramStt())
+                        deepgramUtterance(text, spokenDurationMs);
                 });
             }
             @Override public void onSpeechStarted() {
                 main.post(() -> {
-                    if (sttEngine == VoiceSttSettings.Engine.DEEPGRAM) speechStarted();
+                    if (sttMode.usesDeepgramStt())
+                        deepgramSpeechStarted();
                 });
             }
             @Override public void onEmptyTurn() {
                 main.post(() -> {
-                    if (!started || sttEngine != VoiceSttSettings.Engine.DEEPGRAM) return;
+                    if (!started || sttMode.usesDirectAndroidRecognizer()) return;
+                    boolean waitingForSystem = false;
+                    if (transcriptArbiter != null) {
+                        transcriptArbiter.deepgramEmptyTurn(activeRecognitionCycle);
+                        if (!transcriptArbiter.waitingForMatchingDeepgramFinal())
+                            cancelDeepgramDuplicateFallback();
+                        waitingForSystem = !transcriptArbiter.turnSettled()
+                            && transcriptArbiter.systemEligible();
+                        if (waitingForSystem)
+                            scheduleSystemResultFallback(activeRecognitionCycle);
+                        else if (transcriptArbiter.turnSettled() && responding)
+                            prepareNextRecognitionTurn();
+                    }
                     userSpeaking = false;
-                    if (!responding) afterPlayback();
+                    if (!responding) {
+                        if (waitingForSystem) showStatus("Finalizing speech");
+                        else afterPlayback();
+                    }
                 });
             }
             @Override public void onInterim(String text) {
                 main.post(() -> {
-                    if (started && sttEngine == VoiceSttSettings.Engine.DEEPGRAM
+                    if (started && sttMode.usesDeepgramStt()
                             && !text.trim().isEmpty()) {
                         userSpeaking = true;
                         main.removeCallbacks(idleStop);
@@ -200,7 +230,7 @@ public final class VoiceListeningService extends Service implements AgentService
                             " first_audio_ms=" + firstAudioMs);
                     }
                     boolean canInterrupt = microphoneEnabled
-                        && sttEngine == VoiceSttSettings.Engine.DEEPGRAM;
+                        && sttMode.usesDeepgramStt();
                     showStatus(canInterrupt ? "Speaking · listening for interruption" : "Speaking");
                 });
             }
@@ -216,7 +246,7 @@ public final class VoiceListeningService extends Service implements AgentService
             @Override public void onStreamReady() {
                 main.post(() -> {
                     if (!started || !microphoneEnabled
-                            || sttEngine != VoiceSttSettings.Engine.DEEPGRAM) return;
+                            || sttMode.usesDirectAndroidRecognizer()) return;
                     streamingReady = true;
                     if (!responding && !userSpeaking) {
                         showStatus("Listening");
@@ -228,7 +258,7 @@ public final class VoiceListeningService extends Service implements AgentService
                 main.post(() -> {
                     if (!started) return;
                     showStatus(status);
-                    if (sttEngine == VoiceSttSettings.Engine.DEEPGRAM
+                    if (sttMode.usesDeepgramStt()
                             && (status.startsWith("Microphone") || status.startsWith("Speech recognition"))) {
                         microphoneEnabled = false;
                         active = false;
@@ -240,15 +270,29 @@ public final class VoiceListeningService extends Service implements AgentService
                 });
             }
         });
-        if (sttEngine == VoiceSttSettings.Engine.ANDROID_DEFAULT) {
-            systemSpeech = new AndroidDefaultSpeechRecognizer(this,
+        if (sttMode.usesHybridArbitration()) {
+            transcriptArbiter = new HybridTranscriptArbiter(false,
+                VoiceSttSettings.shortUtteranceMs(this));
+            if (AndroidShortSpeechRecognizer.supported(this)) {
+                shortSpeech = new AndroidShortSpeechRecognizer(this,
+                    new AndroidShortSpeechRecognizer.Callback() {
+                        @Override public void onSpeechStarted() { systemSpeechStarted(); }
+                        @Override public void onSpeechEnded() { systemSpeechEnded(); }
+                        @Override public void onResult(String text) { systemUtterance(text); }
+                        @Override public void onError() { systemRecognitionFailed(); }
+                    });
+                voice.setPcmObserver(shortSpeech);
+            }
+        } else if (sttMode.usesDirectAndroidRecognizer()
+                && AndroidDefaultSpeechRecognizer.supported(this)) {
+            defaultSpeech = new AndroidDefaultSpeechRecognizer(this,
                 new AndroidDefaultSpeechRecognizer.Callback() {
-                    @Override public void onReady() { systemRecognitionReady(); }
-                    @Override public void onSpeechStarted() { systemSpeechStarted(); }
-                    @Override public void onSpeechEnded() { systemSpeechEnded(); }
-                    @Override public void onPartial(String text) { systemPartial(text); }
-                    @Override public void onResult(String text) { systemUtterance(text); }
-                    @Override public void onError(int error) { systemRecognitionError(error); }
+                    @Override public void onReady() { defaultSpeechReady(); }
+                    @Override public void onSpeechStarted() { defaultSpeechStarted(); }
+                    @Override public void onSpeechEnded() { defaultSpeechEnded(); }
+                    @Override public void onPartial(String text) { defaultSpeechPartial(text); }
+                    @Override public void onResult(String text) { defaultSpeechResult(text); }
+                    @Override public void onError(int error) { defaultSpeechError(error); }
                 });
         }
         return true;
@@ -268,19 +312,17 @@ public final class VoiceListeningService extends Service implements AgentService
             active = true;
             streamingReady = false;
             voice.startOutput();
-            if (sttEngine == VoiceSttSettings.Engine.DEEPGRAM) {
-                voice.listen();
-                return true;
-            }
-            if (systemSpeech == null || !AndroidDefaultSpeechRecognizer.supported(this)) {
+            if (sttMode.usesDirectAndroidRecognizer()) {
+                if (defaultSpeech != null && startDefaultSpeechRecognition()) return true;
+                showStatus("Android default speech recognition is unavailable");
                 microphoneEnabled = false;
                 active = false;
                 return false;
             }
-            if (startSystemRecognition()) return true;
-            microphoneEnabled = false;
-            active = false;
-            return false;
+            if (sttMode.usesHybridArbitration())
+                prepareNextRecognitionTurn();
+            voice.listen();
+            return true;
         } catch (RuntimeException denied) {
             Log.w("PocketVoice", "Android denied microphone reactivation", denied);
             microphoneEnabled = false;
@@ -293,7 +335,7 @@ public final class VoiceListeningService extends Service implements AgentService
         if (!started || responding || userSpeaking || pendingAnnouncements.isEmpty()) return;
         currentAnnouncement = pendingAnnouncements.removeFirst();
         main.removeCallbacks(idleStop);
-        pauseSystemRecognitionForOutput();
+        pauseDefaultSpeechForOutput();
         responding = true;
         activeTurn = null;
         voice.startReply();
@@ -309,41 +351,45 @@ public final class VoiceListeningService extends Service implements AgentService
         if (keepListening && microphoneEnabled) {
             showStatus("Listening for follow-up");
             if (!userSpeaking) {
-                if (sttEngine == VoiceSttSettings.Engine.ANDROID_DEFAULT) {
-                    if (!startSystemRecognition()) stopSelf();
-                } else if (streamingReady) {
-                    resetIdle();
+                if (sttMode.usesDirectAndroidRecognizer()) {
+                    if (!startDefaultSpeechRecognition()) stopSelf();
+                } else {
+                    if (sttMode.usesHybridArbitration())
+                        prepareNextRecognitionTurn();
+                    if (streamingReady) resetIdle();
                 }
             }
         } else if (!userSpeaking) stopSelf();
     }
 
-    private boolean startSystemRecognition() {
-        if (!started || sttEngine != VoiceSttSettings.Engine.ANDROID_DEFAULT
-                || !microphoneEnabled || responding || systemSpeech == null) return false;
-        main.removeCallbacks(restartSystemSpeech);
-        main.removeCallbacks(systemFinalTimeout);
+    private boolean startDefaultSpeechRecognition() {
+        if (!started || sttMode.usesDeepgramStt()
+                || !microphoneEnabled || responding || defaultSpeech == null) return false;
+        main.removeCallbacks(restartDefaultSpeech);
+        main.removeCallbacks(defaultSpeechFinalTimeout);
+        main.removeCallbacks(idleStop);
         streamingReady = false;
-        boolean recognitionStarted = systemSpeech.start();
-        if (recognitionStarted) showStatus("Starting Android default speech recognition");
+        boolean recognitionStarted = defaultSpeech.start();
+        if (recognitionStarted)
+            showStatus("Starting Android default speech recognition");
         return recognitionStarted;
     }
 
-    private void pauseSystemRecognitionForOutput() {
-        if (sttEngine != VoiceSttSettings.Engine.ANDROID_DEFAULT) return;
-        main.removeCallbacks(restartSystemSpeech);
-        main.removeCallbacks(systemFinalTimeout);
+    private void pauseDefaultSpeechForOutput() {
+        if (sttMode.usesDeepgramStt()) return;
+        main.removeCallbacks(restartDefaultSpeech);
+        main.removeCallbacks(defaultSpeechFinalTimeout);
         main.removeCallbacks(idleStop);
         streamingReady = false;
-        if (systemSpeech != null && systemSpeech.isActive()) systemSpeech.cancel();
+        if (defaultSpeech != null && defaultSpeech.isActive()) defaultSpeech.cancel();
     }
 
-    private void systemRecognitionReady() {
-        if (!started || sttEngine != VoiceSttSettings.Engine.ANDROID_DEFAULT
+    private void defaultSpeechReady() {
+        if (!started || sttMode.usesDeepgramStt()
                 || !microphoneEnabled || responding) return;
         streamingReady = true;
         if (!userSpeaking) {
-            showStatus("Listening · Android default");
+            showStatus("Listening · Android default only");
             if (systemWakeReadyCuePending) {
                 systemWakeReadyCuePending = false;
                 playSystemReadyCue();
@@ -362,42 +408,42 @@ public final class VoiceListeningService extends Service implements AgentService
         }
     }
 
-    private void systemSpeechStarted() {
-        if (!started || sttEngine != VoiceSttSettings.Engine.ANDROID_DEFAULT) return;
+    private void defaultSpeechStarted() {
+        if (!started || sttMode.usesDeepgramStt()) return;
         speechStarted();
     }
 
-    private void systemSpeechEnded() {
-        if (!started || sttEngine != VoiceSttSettings.Engine.ANDROID_DEFAULT) return;
+    private void defaultSpeechEnded() {
+        if (!started || sttMode.usesDeepgramStt()) return;
         streamingReady = false;
         main.removeCallbacks(idleStop);
-        main.removeCallbacks(systemFinalTimeout);
-        main.postDelayed(systemFinalTimeout, SYSTEM_FINAL_TIMEOUT_MS);
-        showStatus("Finalizing speech");
+        main.removeCallbacks(defaultSpeechFinalTimeout);
+        main.postDelayed(defaultSpeechFinalTimeout, DEFAULT_ANDROID_FINAL_TIMEOUT_MS);
+        showStatus("Finalizing Android speech");
     }
 
-    private void systemPartial(String text) {
-        if (!started || sttEngine != VoiceSttSettings.Engine.ANDROID_DEFAULT
+    private void defaultSpeechPartial(String text) {
+        if (!started || sttMode.usesDeepgramStt()
                 || text == null || text.trim().isEmpty()) return;
         userSpeaking = true;
         main.removeCallbacks(idleStop);
     }
 
-    private void systemUtterance(String text) {
-        if (!started || sttEngine != VoiceSttSettings.Engine.ANDROID_DEFAULT) return;
-        main.removeCallbacks(systemFinalTimeout);
+    private void defaultSpeechResult(String text) {
+        if (!started || sttMode.usesDeepgramStt()) return;
+        main.removeCallbacks(defaultSpeechFinalTimeout);
         streamingReady = false;
         if (text == null || text.trim().isEmpty()) {
             userSpeaking = false;
-            scheduleSystemRecognitionRestart("No speech match · listening again");
+            scheduleDefaultSpeechRestart("No speech match · listening again");
             return;
         }
         sendUtterance(text);
     }
 
-    private void systemRecognitionError(int error) {
-        if (!started || sttEngine != VoiceSttSettings.Engine.ANDROID_DEFAULT) return;
-        main.removeCallbacks(systemFinalTimeout);
+    private void defaultSpeechError(int error) {
+        if (!started || sttMode.usesDeepgramStt()) return;
+        main.removeCallbacks(defaultSpeechFinalTimeout);
         streamingReady = false;
         userSpeaking = false;
         main.removeCallbacks(idleStop);
@@ -411,15 +457,15 @@ public final class VoiceListeningService extends Service implements AgentService
             return;
         }
         if (!responding && keepListening && microphoneEnabled)
-            scheduleSystemRecognitionRestart("Android speech recognition ended · retrying");
+            scheduleDefaultSpeechRestart("Android speech recognition ended · retrying");
     }
 
-    private void scheduleSystemRecognitionRestart(String status) {
-        if (!started || sttEngine != VoiceSttSettings.Engine.ANDROID_DEFAULT
+    private void scheduleDefaultSpeechRestart(String status) {
+        if (!started || sttMode.usesDeepgramStt()
                 || !keepListening || !microphoneEnabled || responding) return;
         showStatus(status);
-        main.removeCallbacks(restartSystemSpeech);
-        main.postDelayed(restartSystemSpeech, 250L);
+        main.removeCallbacks(restartDefaultSpeech);
+        main.postDelayed(restartDefaultSpeech, 250L);
     }
 
     private Notification notification(String status) {
@@ -440,6 +486,55 @@ public final class VoiceListeningService extends Service implements AgentService
 
     private void showStatus(String status) {
         if (started) getSystemService(NotificationManager.class).notify(NOTIFICATION_ID, notification(status));
+    }
+
+    private void cancelSystemResultFallback() {
+        if (systemResultFallback != null) {
+            main.removeCallbacks(systemResultFallback);
+            systemResultFallback = null;
+        }
+    }
+
+    private void scheduleSystemResultFallback(long cycle) {
+        scheduleSystemFallback(cycle, SYSTEM_RESULT_GRACE_MS);
+    }
+
+    private void scheduleSystemEndpointFallback(long cycle) {
+        scheduleSystemFallback(cycle, SYSTEM_ENDPOINT_TIMEOUT_MS);
+    }
+
+    private void scheduleSystemFallback(long cycle, long delayMs) {
+        cancelSystemResultFallback();
+        Runnable task = () -> {
+            if (!started || transcriptArbiter == null || cycle != activeRecognitionCycle) return;
+            HybridTranscriptArbiter.Choice choice = transcriptArbiter.systemWaitExpired(cycle);
+            if (shortSpeech != null) shortSpeech.cancelCycle();
+            acceptTranscriptChoice(choice);
+        };
+        systemResultFallback = task;
+        main.postDelayed(task, delayMs);
+    }
+
+    private void cancelDeepgramDuplicateFallback() {
+        if (deepgramDuplicateFallback != null) {
+            main.removeCallbacks(deepgramDuplicateFallback);
+            deepgramDuplicateFallback = null;
+        }
+    }
+
+    private void scheduleDeepgramDuplicateFallback(long cycle) {
+        cancelDeepgramDuplicateFallback();
+        Runnable task = () -> {
+            if (!started || transcriptArbiter == null || cycle != activeRecognitionCycle) return;
+            deepgramDuplicateFallback = null;
+            if (!transcriptArbiter.matchingDeepgramWaitExpired(cycle)) return;
+            if (transcriptArbiter.turnSettled()) {
+                if (responding || userSpeaking) prepareNextRecognitionTurn();
+                else afterPlayback();
+            }
+        };
+        deepgramDuplicateFallback = task;
+        main.postDelayed(task, SYSTEM_RESULT_GRACE_MS);
     }
 
     private void resetIdle() {
@@ -465,26 +560,148 @@ public final class VoiceListeningService extends Service implements AgentService
         } else showStatus("Hearing you");
     }
 
+    private void markSpeechForArbitration() {
+        if (transcriptArbiter == null || !transcriptArbiter.systemEligible()) return;
+        transcriptArbiter.speechStarted(activeRecognitionCycle, SystemClock.elapsedRealtime());
+    }
+
+    private void deepgramSpeechStarted() {
+        if (!started) return;
+        if (transcriptArbiter != null) {
+            if (transcriptArbiter.turnSettled()) prepareNextRecognitionTurn();
+            transcriptArbiter.deepgramSpeechStarted(activeRecognitionCycle);
+            if (transcriptArbiter.waitingForMatchingDeepgramFinal()) return;
+        }
+        speechStarted();
+    }
+
+    private void systemSpeechStarted() {
+        if (!started) return;
+        markSpeechForArbitration();
+        if (!responding) {
+            userSpeaking = true;
+            main.removeCallbacks(idleStop);
+            showStatus("Hearing you");
+        }
+    }
+
+    private void systemSpeechEnded() {
+        if (!started || transcriptArbiter == null) return;
+        long cycle = activeRecognitionCycle;
+        transcriptArbiter.systemSpeechEnded(cycle, SystemClock.elapsedRealtime());
+
+        // Android's callback can include endpointing silence, so it is not authoritative for
+        // short/long classification. If Flux already finalized, wait only for Android's final
+        // text; otherwise the Flux word timings will make the duration decision when they arrive.
+        cancelSystemResultFallback();
+        if (transcriptArbiter.hasPendingDeepgramFinal())
+            scheduleSystemResultFallback(cycle);
+    }
+
+    private void systemUtterance(String text) {
+        if (!started || transcriptArbiter == null) return;
+        cancelSystemResultFallback();
+        if (wakeStarted && text != null
+                && text.replaceFirst("(?i)^\\s*hey[,]?\\s+jarvis[,!?.\\s]*", "").trim().isEmpty()) {
+            if (shortSpeech != null) shortSpeech.cancelCycle();
+            systemRecognitionFailed();
+            return;
+        }
+        HybridTranscriptArbiter.Choice choice = transcriptArbiter.systemFinal(
+            activeRecognitionCycle, text, SystemClock.elapsedRealtime());
+        if (choice == null && transcriptArbiter.systemEligible()) {
+            if (transcriptArbiter.hasPendingDeepgramFinal())
+                scheduleSystemResultFallback(activeRecognitionCycle);
+            else scheduleSystemEndpointFallback(activeRecognitionCycle);
+        }
+        acceptTranscriptChoice(choice);
+    }
+
+    private void systemRecognitionFailed() {
+        if (!started || transcriptArbiter == null) return;
+        cancelSystemResultFallback();
+        HybridTranscriptArbiter.Choice choice =
+            transcriptArbiter.systemFailed(activeRecognitionCycle);
+        acceptTranscriptChoice(choice);
+        if (choice == null && !responding && !transcriptArbiter.deepgramTurnOpen()) {
+            userSpeaking = false;
+            if (streamingReady) resetIdle();
+        }
+    }
+
+    private void deepgramUtterance(String text, long spokenDurationMs) {
+        if (!started) return;
+        if (transcriptArbiter == null) {
+            sendUtterance(text);
+            return;
+        }
+        HybridTranscriptArbiter.Choice choice = transcriptArbiter.deepgramFinal(
+            activeRecognitionCycle, text, SystemClock.elapsedRealtime(), spokenDurationMs);
+        if (!transcriptArbiter.waitingForMatchingDeepgramFinal())
+            cancelDeepgramDuplicateFallback();
+        if (choice == null && transcriptArbiter.systemEligible()) {
+            if (transcriptArbiter.systemEndpointObserved())
+                scheduleSystemResultFallback(activeRecognitionCycle);
+            else scheduleSystemEndpointFallback(activeRecognitionCycle);
+        }
+        acceptTranscriptChoice(choice);
+    }
+
+    private void acceptTranscriptChoice(HybridTranscriptArbiter.Choice choice) {
+        if (choice != null) {
+            cancelSystemResultFallback();
+            if (choice.source == HybridTranscriptArbiter.Source.DEEPGRAM && shortSpeech != null)
+                shortSpeech.cancelCycle();
+            Log.i("PocketVoice", "Transcript source=" +
+                (choice.source == HybridTranscriptArbiter.Source.SYSTEM ? "android-system" : "deepgram"));
+            sendUtterance(choice.text);
+            if (choice.source == HybridTranscriptArbiter.Source.SYSTEM
+                    && transcriptArbiter != null
+                    && transcriptArbiter.waitingForMatchingDeepgramFinal())
+                scheduleDeepgramDuplicateFallback(activeRecognitionCycle);
+        }
+        if (transcriptArbiter != null && transcriptArbiter.turnSettled()) {
+            if (!responding && !userSpeaking) afterPlayback();
+            else prepareNextRecognitionTurn();
+        }
+    }
+
+    private void prepareNextRecognitionTurn() {
+        cancelSystemResultFallback();
+        cancelDeepgramDuplicateFallback();
+        if (!started || !microphoneEnabled
+                || sttMode != VoiceSttSettings.Mode.HYBRID_THRESHOLD
+                || transcriptArbiter == null) return;
+        long cycle = ++activeRecognitionCycle;
+        boolean systemReady = shortSpeech != null && shortSpeech.startCycle();
+        transcriptArbiter.reset(cycle, systemReady, VoiceSttSettings.shortUtteranceMs(this));
+    }
+
     private void sendUtterance(String text) {
         if (!started || voice == null || text == null || text.trim().isEmpty()) return;
         if (wakeStarted) {
             text = text.replaceFirst("(?i)^\\s*hey[,]?\\s+jarvis[,!?.\\s]*", "").trim();
             if (text.isEmpty()) {
                 userSpeaking = false;
-                if (!responding) afterPlayback();
+                if (!responding) {
+                    showStatus("Listening for follow-up");
+                    if (sttMode.usesDirectAndroidRecognizer())
+                        scheduleDefaultSpeechRestart("Listening for follow-up");
+                    else if (streamingReady) resetIdle();
+                }
                 return;
             }
         }
         if (responding) speechStarted();
         userSpeaking = false;
         main.removeCallbacks(idleStop);
-        pauseSystemRecognitionForOutput();
+        pauseDefaultSpeechForOutput();
         responding = true;
         activeTurn = UUID.randomUUID().toString();
         utteranceAt = SystemClock.elapsedRealtime();
         firstTokenAt = 0;
         voice.startReply();
-        showStatus(sttEngine == VoiceSttSettings.Engine.ANDROID_DEFAULT
+        showStatus(sttMode.usesDirectAndroidRecognizer()
             ? "Thinking" : "Thinking · listening for interruption");
         try {
             command(new JSONObject().put("action", "send")
@@ -529,12 +746,17 @@ public final class VoiceListeningService extends Service implements AgentService
         wakeStarted = false;
         systemWakeReadyCuePending = false;
         main.removeCallbacks(idleStop);
-        main.removeCallbacks(restartSystemSpeech);
-        main.removeCallbacks(systemFinalTimeout);
+        main.removeCallbacks(restartDefaultSpeech);
+        main.removeCallbacks(defaultSpeechFinalTimeout);
+        cancelSystemResultFallback();
+        cancelDeepgramDuplicateFallback();
         AgentService.unobserve(this);
         pendingAnnouncements.clear();
         acceptedIds.clear();
-        if (systemSpeech != null) { systemSpeech.close(); systemSpeech = null; }
+        if (voice != null) voice.setPcmObserver(null);
+        if (shortSpeech != null) { shortSpeech.close(); shortSpeech = null; }
+        if (defaultSpeech != null) { defaultSpeech.close(); defaultSpeech = null; }
+        transcriptArbiter = null;
         if (voice != null) { voice.close(); voice = null; }
         WakeWordService.resumeAfterConversation(this);
         stopForeground(STOP_FOREGROUND_REMOVE);

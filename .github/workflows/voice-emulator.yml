@@ -12,6 +12,10 @@ on:
       - 'app/src/main/java/dev/pocket/agent/DeepgramVoice.java'
       - 'app/src/main/java/dev/pocket/agent/PcmCaptureQueue.java'
       - 'app/src/main/java/dev/pocket/agent/VoiceListeningService.java'
+      - 'app/src/main/java/dev/pocket/agent/AndroidShortSpeechRecognizer.java'
+      - 'app/src/main/java/dev/pocket/agent/AndroidDefaultSpeechRecognizer.java'
+      - 'app/src/main/java/dev/pocket/agent/HybridTranscriptArbiter.java'
+      - 'app/src/main/java/dev/pocket/agent/VoiceSttSettings.java'
       - 'app/src/main/java/dev/pocket/agent/JarvisDetector.java'
       - 'app/src/main/java/dev/pocket/agent/JarvisProfile.java'
       - 'app/src/main/java/dev/pocket/agent/WakeWordService.java'
@@ -27,6 +31,8 @@ on:
       - 'app/src/main/assets/wakeword/**'
       - 'app/build.gradle.kts'
       - 'app/src/androidTest/java/dev/pocket/agent/InstantVoiceCaptureDeviceTest.java'
+      - 'app/src/androidTest/java/dev/pocket/agent/HybridSttDeviceTest.java'
+      - 'app/src/androidTest/java/dev/pocket/agent/VoiceSttSettingsDeviceTest.java'
   workflow_dispatch:
 permissions:
   contents: read
@@ -58,6 +64,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: voice-capture-emulator-tests
-          path: app/build/outputs/androidTest-results/connected/
+          path: |
+            app/build/outputs/androidTest-results/connected/
+            app/build/outputs/voice-emulator-test-evidence/
           retention-days: 30
           if-no-files-found: ignore

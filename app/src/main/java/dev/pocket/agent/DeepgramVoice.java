@@ -31,8 +31,11 @@ import org.json.JSONObject;
  * so that Flux can trigger a genuine speech-driven interruption.
  */
 final class DeepgramVoice implements AutoCloseable {
+    interface PcmObserver { void onPcm(byte[] samples, int length); }
+
     interface Callback {
         void onUtterance(String text);
+        default void onUtterance(String text, long spokenDurationMs) { onUtterance(text); }
         void onSpeechStarted();
         void onEmptyTurn();
         void onInterim(String text);
@@ -75,6 +78,7 @@ final class DeepgramVoice implements AutoCloseable {
     private boolean ttsReady, hasSpeech, ttsFailed, firstAudio, speakerStarted;
     private volatile boolean waitingForFlush, waitingForClear;
     private AudioRecord microphone;
+    private volatile PcmObserver pcmObserver;
     private AcousticEchoCanceler echoCanceler;
     private NoiseSuppressor noiseSuppressor;
     private AudioTrack speaker;
@@ -242,6 +246,10 @@ final class DeepgramVoice implements AutoCloseable {
         timeoutHandler.postDelayed(timeout, FLUSH_TIMEOUT_MS);
     }
 
+    void setPcmObserver(PcmObserver observer) {
+        pcmObserver = observer;
+    }
+
     synchronized void listen() {
         if (closed || listening) return;
         if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
@@ -276,7 +284,7 @@ final class DeepgramVoice implements AutoCloseable {
                         JSONObject packet = new JSONObject(text);
                         String finalText = VoiceTranscript.completedTurn(packet);
                         if (finalText != null) {
-                            callback.onUtterance(finalText);
+                            callback.onUtterance(finalText, VoiceTranscript.spokenDurationMs(packet));
                         } else if (VoiceTranscript.startedTurn(packet)) {
                             callback.onSpeechStarted();
                         } else if (VoiceTranscript.emptyCompletedTurn(packet)) {
@@ -376,6 +384,11 @@ final class DeepgramVoice implements AutoCloseable {
                     if (size <= 0) {
                         if (listening) callback.onStatus("Microphone capture interrupted");
                         break;
+                    }
+                    PcmObserver observer = pcmObserver;
+                    if (observer != null) {
+                        try { observer.onPcm(samples, size); }
+                        catch (RuntimeException ignored) { pcmObserver = null; }
                     }
                     synchronized (DeepgramVoice.this) {
                         if (!listening || closed) break;
@@ -625,6 +638,7 @@ final class DeepgramVoice implements AutoCloseable {
     @Override public synchronized void close() {
         if (closed) return;
         closed = true;
+        pcmObserver = null;
         ++playbackEpoch;
         cancelFlushTimeout();
         stopListening();

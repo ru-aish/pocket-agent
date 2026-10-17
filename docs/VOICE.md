@@ -4,8 +4,17 @@
 
 Pocket Agent remains the assistant and subagent host. Android's selected digital-assistant
 gesture activates a microphone-type Android foreground service with an ongoing
-notification, without leaving an overlay on screen. A live microphone stream goes to Deepgram STT;
-a finalized utterance is submitted as **one normal main-agent user message**. Only
+notification, without leaving an overlay on screen. Settings choose one of three STT modes:
+**Hybrid**, **Android default only**, or **Deepgram only**. Hybrid preserves the parallel path:
+Deepgram receives live PCM from the first sample and, on Android 13+, the same PCM is injected into
+an available Android system recognizer without opening a second microphone. Its switch threshold is
+configurable from Settings and defaults to three seconds. Flux word timestamps are the preferred
+spoken-duration measurement; Android wins below the threshold when available and Deepgram wins at
+or above it. **Android default only** disables Deepgram STT and hybrid arbitration and lets the
+normal system `SpeechRecognizer` own the microphone, matching the standalone Android test path.
+**Deepgram only** disables Android recognition and threshold logic. Deepgram TTS remains common to
+all three modes.
+A nonempty selected transcript, after any wake-word prefix is removed, is submitted as **one normal main-agent user message**; wake-word-only turns are ignored. Only
 text deltas produced in that particular main response are sent to Deepgram streaming
 TTS. Subsequent Pi9 worker completion messages and ordinary text messages remain
 visible in chat without speech unless the model explicitly calls `speak_to_user`. The listening service ends after three seconds of idle silence, or immediately via
@@ -31,9 +40,19 @@ Pocket Agent instead uses directly documented Deepgram APIs:
 
 - STT: `wss://api.deepgram.com/v2/listen` using Flux `flux-general-en`, raw
   16 kHz signed PCM16 mono with 80 ms microphone packets (the Deepgram-recommended
-  chunk size). Only `TurnInfo` events with `event=EndOfTurn` submit a user turn;
-  interim updates do not initiate model inference. Default Flux turn detection
-  is used without speculative eager-generation to avoid unwanted API calls.
+  chunk size). Deepgram receives every utterance from the beginning even while the
+  Android system recognizer is eligible for a short-turn result. On Android 13+ with
+  a compatible recognition service, that same PCM16 stream is supplied through
+  `RecognizerIntent.EXTRA_AUDIO_SOURCE`; the system recognizer never owns the microphone.
+  The deterministic arbiter prefers the first-to-last Flux word-timestamp span for
+  short/long classification (3000 ms by default) rather than callback arrival time or the full
+  audio window. This excludes endpointing silence while preserving pauses between recognized
+  words. Android's transcript wins below the configured threshold when available; at or above it,
+  Deepgram's transcript wins when available. Android begin/end-of-speech timing is only a fallback
+  if Flux omits complete word timestamps. Duplicate finals are suppressed. On Android 13+, Pocket Agent
+  also requests quality formatting and recognition biasing; when Contacts permission is granted,
+  up to 128 contact display names are supplied as explicit bias strings to improve proper-name
+  recognition. Flux provisional updates do not initiate model inference.
 - TTS: `wss://api.deepgram.com/v1/speak` with Aura-2 Thalia,
   24 kHz signed PCM16 mono. The outgoing Pi response is cut at punctuation
   or a long whitespace boundary, preserving incomplete word fragments.
@@ -156,7 +175,13 @@ Validation checklist:
    and foreground memory/battery with system tools. Never claim live voice
    latency was measured without a Deepgram-connected voice trial.
 
-Known limitations: Deepgram STT/TTS consumes network access and quota.
+Known limitations: Deepgram STT/TTS consumes network access and quota. Hybrid Android short-turn
+recognition requires Android 13+ and a recognition service that accepts injected PCM; otherwise
+Hybrid falls back to Deepgram. Android default only uses the public Android `SpeechRecognizer`
+microphone path and requires an available system recognition service. Neither Android path is
+Gboard's private advanced voice-typing pipeline, so Gboard's learned/personalized behavior cannot
+be guaranteed. The Hybrid switch threshold can be tuned from 0.50 to 8.00 seconds in Settings and
+is disabled in Android-only and Deepgram-only modes.
 An OEM may not expose the power-button assistant gesture; it may invoke a
 different assistant despite the selected role. Android 12+ background service
 and microphone restrictions still apply.

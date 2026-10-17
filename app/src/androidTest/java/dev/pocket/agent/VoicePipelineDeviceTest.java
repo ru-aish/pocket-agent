@@ -5,7 +5,9 @@ import androidx.test.platform.app.InstrumentationRegistry;
 import android.content.Intent;
 import android.content.ComponentName;
 import android.content.Context;
+import org.json.JSONArray;
 import org.json.JSONObject;
+import java.util.ArrayList;
 import java.util.List;
 import org.junit.Test;
 import org.junit.Assume;
@@ -75,6 +77,36 @@ public class VoicePipelineDeviceTest {
             .put("event", "EndOfTurn").put("transcript", "  ")));
         assertEquals("I want a reminder", VoiceTranscript.completedTurn(new JSONObject()
             .put("type", "TurnInfo").put("event", "EndOfTurn").put("transcript", " I want a reminder ")));
+    }
+
+    @Test public void fluxWordTimestampsMeasureSpokenAudioNotEndpointWindow() throws Exception {
+        JSONObject turn = new JSONObject().put("type", "TurnInfo").put("event", "EndOfTurn")
+            .put("audio_window_start", 0.0).put("audio_window_end", 4.8)
+            .put("words", new JSONArray()
+                .put(new JSONObject().put("word", "call").put("start", 1.10).put("end", 1.32))
+                .put(new JSONObject().put("word", "Tanmay").put("start", 1.40).put("end", 1.94)));
+        assertEquals(840L, VoiceTranscript.spokenDurationMs(turn));
+
+        assertEquals(-1L, VoiceTranscript.spokenDurationMs(new JSONObject()
+            .put("type", "TurnInfo").put("event", "EndOfTurn").put("words", new JSONArray())));
+
+        assertEquals(-1L, VoiceTranscript.spokenDurationMs(new JSONObject()
+            .put("type", "TurnInfo").put("event", "EndOfTurn")
+            .put("words", new JSONArray()
+                .put(new JSONObject().put("word", "call").put("start", 1.10).put("end", 1.32))
+                .put(new JSONObject().put("word", "Tanmay").put("start", 1.40)))));
+    }
+
+    @Test public void contactCommandPrefersExactContactHypothesis() {
+        ArrayList<String> options = new ArrayList<>(List.of("call ten may", "call Tanmay"));
+        ArrayList<String> contacts = new ArrayList<>(List.of("Tanmay", "Alice Example"));
+        assertEquals("call Tanmay",
+            AndroidShortSpeechRecognizer.chooseRecognitionResult(options, contacts));
+
+        ArrayList<String> ordinary = new ArrayList<>(List.of(
+            "tell me about ten may", "tell me about Tanmay"));
+        assertEquals("tell me about ten may",
+            AndroidShortSpeechRecognizer.chooseRecognitionResult(ordinary, contacts));
     }
 
     @Test public void emptyConfirmedTurnReleasesSpeechStateWithoutDispatch() throws Exception {

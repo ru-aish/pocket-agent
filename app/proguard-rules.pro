@@ -27,6 +27,8 @@
 -keep class dev.pocket.agent.VoiceCredentialStore { *; }
 -keep class dev.pocket.agent.VoiceAnnouncement { *; }
 -keep class dev.pocket.agent.VoiceListeningService { *; }
+-keep class dev.pocket.agent.HybridTranscriptArbiter** { *; }
+-keep class dev.pocket.agent.AndroidShortSpeechRecognizer** { *; }
 
 -keep class dev.pocket.agent.MemoryStore { *; }
 

@@ -1,6 +1,6 @@
 # Pocket Agent
 
-An Android assistant that delegates phone work to background agents while you keep talking to the main conversation. Pi and the adapted `@pi9/subagent` runtime run inside the app; workers call native Android tools directly. A selectable Android digital-assistant integration adds Deepgram speech input/output while preserving the same agent thread.
+An Android assistant that delegates phone work to background agents while you keep talking to the main conversation. Pi and the adapted `@pi9/subagent` runtime run inside the app; workers call native Android tools directly. Settings can route speech-to-text three ways: **Hybrid**, **Android default only**, or **Deepgram only**. Hybrid sends the same PCM to Deepgram and, on Android 13+, an available system recognizer in parallel; its configurable switch threshold defaults to 3 seconds, with Android preferred below the threshold and Deepgram at or above it. Android default only uses the phone's normal `SpeechRecognizer` microphone path with no hybrid arbitration or threshold. Deepgram only skips Android recognition entirely. Deepgram continues to provide speech synthesis in every mode.
 
 **Preview:** [v0.1.1-preview.1](https://github.com/ru-aish/pocket-agent/releases/tag/v0.1.1-preview.1) adds direct Codex account sign-in and secure login-cache import. The signed x86_64 APK passed direct Luna delegation with the relay stopped. ARM64 execution remains unverified. See the [account validation record](docs/CODEX_AUTH_VALIDATION.md).
 
