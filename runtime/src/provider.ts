@@ -82,7 +82,7 @@ function failure(model: ProviderModel | undefined, text: string, aborted = false
   };
   stream.push({type:'error',reason:aborted ? 'aborted' : 'error',error:output});stream.end(output);return stream;
 }
-function fixedCompletionsFetch(mode: string, fetcher: typeof fetch): typeof fetch {
+function fixedCompletionsFetch(mode: string, fetcher: typeof fetch, requestSignal?: AbortSignal): typeof fetch {
   const expected = mode === 'opencode'
     ? OPENCODE_BASE_URL + '/chat/completions'
     : mode === 'nebius'
@@ -91,7 +91,11 @@ function fixedCompletionsFetch(mode: string, fetcher: typeof fetch): typeof fetc
   if (!expected) return fetcher;
   return (async(input: any, init?: RequestInit)=>{
     if (String(input) !== expected) throw new Error('Unexpected fixed-provider inference destination.');
-    return fetcher(expected,{...init,redirect:'error'});
+    const timeout = AbortSignal.timeout(120000);
+    // Keep both the wall-clock timeout and the original conversation signal
+    // attached after response headers arrive so a stalled SSE body cannot hang.
+    const signal = AbortSignal.any([timeout,...(init?.signal?[init.signal]:[]),...(requestSignal?[requestSignal]:[])]);
+    return fetcher(expected,{...init,redirect:'error',signal});
   }) as typeof fetch;
 }
 
@@ -154,7 +158,7 @@ export function makeStream(config: ProviderConfig, credentials: ProviderCredenti
         : model.api === 'openai-completions'
           ? completionsStreamSimple(model,context,{
               ...shared,
-              fetch:fixedCompletionsFetch(mode,options?.fetch ?? globalThis.fetch),
+              fetch:fixedCompletionsFetch(mode,options?.fetch ?? globalThis.fetch,options?.signal),
             })
           : streamSimple(model,context,shared);
       const guarded = new AssistantMessageEventStream();
