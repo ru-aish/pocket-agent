@@ -4,6 +4,8 @@ import android.Manifest;
 import android.app.Activity;
 import android.app.role.RoleManager;
 import android.app.AlertDialog;
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.Intent;
 import android.net.Uri;
 import android.view.WindowManager;
@@ -18,10 +20,12 @@ import android.os.Build;
 import android.os.Bundle;
 import android.provider.Settings;
 import android.text.InputType;
+import android.view.Gravity;
 import android.view.View;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.Spinner;
@@ -38,7 +42,7 @@ public final class MainActivity extends Activity implements AgentService.Observe
     private ScrollView messages;
     private EditText input;
     private LinearLayout taskList;
-    private Button send;
+    private Button send, jumpToBottom;
     private JSONObject state = new JSONObject();
     private String viewedWorker;
     private String deferredUserMessage;
@@ -67,8 +71,19 @@ public final class MainActivity extends Activity implements AgentService.Observe
         toolbar.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
         toolbar.addView(button("Settings", this::settings)); root.addView(toolbar);
         status = text("Stopped · Send starts the runtime"); root.addView(status);
+        LinearLayout historyActions = row();
+        historyActions.addView(button("New main thread", this::newMainThread), new LinearLayout.LayoutParams(0, -2, 1));
+        historyActions.addView(button("Copy history", this::copyHistory), new LinearLayout.LayoutParams(0, -2, 1));
+        root.addView(historyActions);
+        FrameLayout transcriptFrame = new FrameLayout(this);
         messages = new ScrollView(this); transcript = text(""); transcript.setTextIsSelectable(true); transcript.setPadding(0, dp(12), 0, dp(12)); messages.addView(transcript);
-        root.addView(messages, new LinearLayout.LayoutParams(-1, 0, 1));
+        transcriptFrame.addView(messages, new FrameLayout.LayoutParams(-1, -1));
+        jumpToBottom = button("↓", () -> { messages.fullScroll(View.FOCUS_DOWN); messages.post(this::updateJumpToBottom); });
+        jumpToBottom.setContentDescription("Jump to latest message"); jumpToBottom.setVisibility(View.GONE); jumpToBottom.setMinWidth(0); jumpToBottom.setMinimumWidth(0);
+        FrameLayout.LayoutParams jumpParams = new FrameLayout.LayoutParams(dp(48), dp(48), Gravity.END | Gravity.BOTTOM); jumpParams.setMargins(0, 0, dp(6), dp(6));
+        transcriptFrame.addView(jumpToBottom, jumpParams);
+        messages.setOnScrollChangeListener((view, x, y, oldX, oldY) -> updateJumpToBottom());
+        root.addView(transcriptFrame, new LinearLayout.LayoutParams(-1, 0, 1));
         TextView tasksTitle = text("Tasks"); tasksTitle.setTypeface(null, Typeface.BOLD); root.addView(tasksTitle);
         ScrollView taskScroll = new ScrollView(this); taskList = column(); taskScroll.addView(taskList); root.addView(taskScroll, new LinearLayout.LayoutParams(-1, dp(112)));
         input = new EditText(this); input.setHint("Message main agent"); input.setMinLines(1); input.setMaxLines(4); input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES); root.addView(input);
@@ -154,8 +169,9 @@ public final class MainActivity extends Activity implements AgentService.Observe
         if(!rendered.contentEquals(transcript.getText())) {
             boolean follow=messages.getScrollY()+messages.getHeight()>=transcript.getHeight()-dp(48);
             transcript.setText(rendered);
-            if(follow)messages.post(()->messages.fullScroll(View.FOCUS_DOWN));
-        }
+            if(follow)messages.post(()->{ messages.fullScroll(View.FOCUS_DOWN); updateJumpToBottom(); });
+            else messages.post(this::updateJumpToBottom);
+        } else messages.post(this::updateJumpToBottom);
         taskList.removeAllViews(); JSONArray tasks = state.optJSONArray("tasks");
         if (tasks == null || tasks.length() == 0) taskList.addView(text("No tasks yet"));
         else for (int i = 0; i < tasks.length(); i++) {
@@ -174,6 +190,50 @@ public final class MainActivity extends Activity implements AgentService.Observe
     private String workerMessages(String id) {
         JSONObject all = state.optJSONObject("workerMessages"); return formatMessages(all == null ? null : all.optJSONArray(id));
     }
+    private void updateJumpToBottom() {
+        if (jumpToBottom == null || messages == null || messages.getChildCount() == 0) return;
+        View content = messages.getChildAt(0);
+        boolean away = content.getHeight() - messages.getScrollY() - messages.getHeight() > dp(48);
+        jumpToBottom.setVisibility(away ? View.VISIBLE : View.GONE);
+    }
+    private void newMainThread() {
+        if (activeWork()) { toast("Finish active work before starting a new main thread"); return; }
+        new AlertDialog.Builder(this).setTitle("Start a new main thread?")
+            .setMessage("The main chat will start fresh. Saved worker tasks and their histories stay available for debugging and follow-up.")
+            .setNegativeButton("Cancel", null).setPositiveButton("Start new thread", (dialog, which) -> {
+                if (AgentService.isRunning()) command(json("action", "new_main"));
+                else { state = store.requestFreshMain(); render(); toast("New main thread ready"); }
+            }).show();
+    }
+    private void copyHistory() {
+        ClipboardManager clipboard = getSystemService(ClipboardManager.class);
+        if (clipboard == null) { toast("Clipboard unavailable"); return; }
+        clipboard.setPrimaryClip(ClipData.newPlainText("Pocket Agent debug history", debugHistory(state)));
+        toast("Conversation history copied");
+    }
+    static String debugHistory(JSONObject snapshot) {
+        try {
+            JSONObject provider = snapshot.optJSONObject("provider");
+            JSONObject safeProvider = new JSONObject();
+            if (provider != null) {
+                safeProvider.put("mode", provider.optString("mode"));
+                safeProvider.put("model", provider.optString("model"));
+            }
+            JSONObject debug = new JSONObject();
+            debug.put("provider", safeProvider);
+            debug.put("busy", snapshot.optBoolean("busy"));
+            debug.put("active", snapshot.optBoolean("active"));
+            debug.put("mainPaused", snapshot.optBoolean("mainPaused"));
+            debug.put("mainInterrupted", snapshot.optBoolean("mainInterrupted"));
+            debug.put("mainTurns", snapshot.optInt("mainTurns"));
+            debug.put("lastError", snapshot.opt("lastError"));
+            debug.put("mainSystemPrompt", snapshot.optString("mainSystemPrompt"));
+            debug.put("mainMessages", snapshot.optJSONArray("messages") == null ? new JSONArray() : snapshot.optJSONArray("messages"));
+            debug.put("tasks", snapshot.optJSONArray("tasks") == null ? new JSONArray() : snapshot.optJSONArray("tasks"));
+            debug.put("workerMessages", snapshot.optJSONObject("workerMessages") == null ? new JSONObject() : snapshot.optJSONObject("workerMessages"));
+            return debug.toString(2);
+        } catch (Exception invalidState) { throw new IllegalStateException("Unable to format debug history", invalidState); }
+    }
     private void worker(String id) {
         viewedWorker = id; LinearLayout panel = column(); panel.setPadding(dp(16), dp(8), dp(16), 0);
         ScrollView scroll = new ScrollView(this); workerTranscript = text(workerMessages(id)); workerTranscript.setTextIsSelectable(true); scroll.addView(workerTranscript); panel.addView(scroll, new LinearLayout.LayoutParams(-1, dp(280)));
@@ -190,11 +250,19 @@ public final class MainActivity extends Activity implements AgentService.Observe
         Intent service = new Intent(this, AgentService.class).setAction(AgentService.ACTION_COMMAND).putExtra("command", command.toString());
         startForegroundService(service);
     }
-    private boolean activeWork() { return state.optBoolean("busy") || state.optBoolean("active"); }
+    private boolean activeWork() { return AgentService.isRunning() && (state.optBoolean("busy") || state.optBoolean("active")); }
     private void settings() {
         CredentialStore credentials = new CredentialStore(this); final JSONObject saved;
         try { saved = credentials.get(); } catch (Exception e) { toast("Unable to read protected credentials"); return; }
         LinearLayout panel = column(); panel.setPadding(dp(20), dp(4), dp(20), dp(8));
+        panel.addView(text("Main system prompt"));
+        EditText mainPrompt = new EditText(this); mainPrompt.setText(state.optString("mainSystemPrompt")); mainPrompt.setHint("Built-in default will be used if left blank");
+        mainPrompt.setMinLines(5); mainPrompt.setMaxLines(12); mainPrompt.setGravity(Gravity.TOP | Gravity.START);
+        mainPrompt.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES); panel.addView(mainPrompt);
+        panel.addView(text("This controls the main agent only. Worker prompts stay unchanged."));
+        panel.addView(button("Reset to built-in default", () -> {
+            mainPrompt.setText(""); mainPrompt.setHint("Built-in default selected; tap Save");
+        }));
         panel.addView(text("Provider")); Spinner mode = new Spinner(this);
         String[] names = {"Scripted model (local validation)", "API key (HTTPS)", "OpenCode Free (Console key)", "Nebius Token Factory", "Codex emulator relay (development)", "Codex account (ChatGPT)"};
         String[] modes = {"scripted", "openai", CredentialStore.OPENCODE, CredentialStore.NEBIUS, "codex", CredentialStore.CODEX_ACCOUNT};
@@ -421,7 +489,17 @@ public final class MainActivity extends Activity implements AgentService.Observe
                         String entered = secret.getText().toString().trim();
                         config.put("apiKey", entered.isEmpty() && sameProvider ? saved.optString("apiKey") : entered);
                     }
-                    credentials.save(config); invalidateAccountOperations(); if (AgentService.isRunning()) command(json("action", "configure")); dialog.dismiss(); toast("Connection saved");
+                    String prompt = mainPrompt.getText().toString().trim();
+                    if (prompt.length() > 50000) { toast("Main system prompt must be 50000 characters or fewer"); return; }
+                    credentials.save(config); invalidateAccountOperations();
+                    if (AgentService.isRunning()) {
+                        JSONObject configure = json("action", "configure");
+                        if (prompt.isEmpty()) configure.put("resetSystemPrompt", true); else configure.put("systemPrompt", prompt);
+                        command(configure);
+                    } else {
+                        store.saveMainSystemPrompt(prompt); state = store.load(); render();
+                    }
+                    dialog.dismiss(); toast("Settings saved");
                 } catch (Exception error) { toast(error instanceof IllegalArgumentException ? error.getMessage() : "Could not save connection"); }
             });
         });

@@ -59,6 +59,25 @@ public final class StateStore extends SQLiteOpenHelper {
         } catch (org.json.JSONException e) { throw new IllegalStateException(e); }
         return result;
     }
+    public synchronized void saveMainSystemPrompt(String prompt) {
+        JSONObject durable = loadDurable(), snapshot = load();
+        try {
+            if (prompt == null || prompt.trim().isEmpty()) durable.remove("mainSystemPrompt");
+            else durable.put("mainSystemPrompt", prompt.trim());
+            saveDurable(durable);
+            snapshot.put("mainSystemPrompt", prompt == null ? "" : prompt.trim());
+            save(snapshot);
+        } catch (org.json.JSONException e) { throw new IllegalStateException(e); }
+    }
+    public synchronized JSONObject requestFreshMain() {
+        JSONObject durable = loadDurable(), snapshot = load();
+        try {
+            durable.put("freshMainRequested", true); saveDurable(durable);
+            snapshot.put("messages", new JSONArray()).put("mainTurns", 0).put("mainPaused", false)
+                    .put("mainInterrupted", false).put("busy", false).put("active", false).put("lastError", JSONObject.NULL);
+            save(snapshot); return snapshot;
+        } catch (org.json.JSONException e) { throw new IllegalStateException(e); }
+    }
     /** In-memory Pi sessions cannot survive process death. Never replay unresolved side effects. */
     public synchronized JSONObject markInterrupted() {
         JSONObject state = load();

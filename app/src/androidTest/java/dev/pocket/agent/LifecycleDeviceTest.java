@@ -1,6 +1,8 @@
 package dev.pocket.agent;
 
 import android.app.Activity;
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
@@ -10,6 +12,9 @@ import android.os.Build;
 import android.os.Debug;
 import android.os.Process;
 import android.os.SystemClock;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.TextView;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.platform.app.InstrumentationRegistry;
 import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry;
@@ -60,6 +65,23 @@ public class LifecycleDeviceTest {
             Collection<Activity> activities = ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED);
             for (Activity activity : activities) if (activity instanceof MainActivity) { result.set(activity); break; }
         }); return result.get();
+    }
+    private View findText(View root, String value) {
+        if (root instanceof TextView && value.contentEquals(((TextView) root).getText())) return root;
+        if (root instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) root;
+            for (int i = 0; i < group.getChildCount(); i++) { View found = findText(group.getChildAt(i), value); if (found != null) return found; }
+        }
+        return null;
+    }
+    private View findDescription(View root, String value) {
+        CharSequence description = root.getContentDescription();
+        if (description != null && value.contentEquals(description)) return root;
+        if (root instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) root;
+            for (int i = 0; i < group.getChildCount(); i++) { View found = findDescription(group.getChildAt(i), value); if (found != null) return found; }
+        }
+        return null;
     }
     private JSONObject command(RuntimeHost host, JSONObject command) throws Exception {
         JSONObject result = host.dispatch(command).get(10, TimeUnit.SECONDS);
@@ -161,6 +183,42 @@ public class LifecycleDeviceTest {
             context().getSharedPreferences(MARKER, Context.MODE_PRIVATE).edit().remove("checkpoint").commit();
         } finally { stopAndIdle(h); }
     }
+    @Test public void mainThreadPromptAndDebugControlsWorkOnDevice() throws Exception {
+        RuntimeHost h = scriptedHost();
+        try {
+            String custom = "Device-test custom main prompt";
+            command(h, action("set_system_prompt").put("text", custom));
+            until("custom system prompt saved", 5000, () -> custom.equals(view().optString("mainSystemPrompt")));
+            command(h, action("send").put("text", "hello before fresh thread"));
+            until("main turn completed", 10000, () -> !view().optBoolean("active") && view().optJSONArray("messages").length() > 0);
+            command(h, action("new_main"));
+            until("fresh main state saved", 5000, () -> view().optJSONArray("messages").length() == 0 && view().optInt("mainTurns") == 0);
+            assertEquals("New main thread must retain the selected prompt", custom, view().optString("mainSystemPrompt"));
+
+            Activity activity = resumedActivity(); assertNotNull(activity);
+            AtomicReference<View> fresh = new AtomicReference<>(), copy = new AtomicReference<>(), jump = new AtomicReference<>();
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+                View root = activity.findViewById(android.R.id.content);
+                fresh.set(findText(root, "New main thread")); copy.set(findText(root, "Copy history")); jump.set(findDescription(root, "Jump to latest message"));
+            });
+            assertNotNull("New main thread control missing", fresh.get());
+            assertNotNull("Copy history control missing", copy.get());
+            assertNotNull("Jump-to-bottom control missing", jump.get());
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> copy.get().performClick());
+            ClipboardManager clipboard = context().getSystemService(ClipboardManager.class);
+            assertNotNull("Clipboard service missing", clipboard); assertTrue("Copy history did not publish a clip", clipboard.hasPrimaryClip());
+            ClipData clip = clipboard.getPrimaryClip(); assertNotNull(clip); assertTrue(clip.getItemAt(0).coerceToText(context()).toString().contains(custom));
+
+            JSONObject synthetic = new JSONObject().put("provider", new JSONObject().put("mode", "openai").put("model", "safe-model").put("apiKey", "synthetic-secret"))
+                    .put("messages", new JSONArray().put(new JSONObject().put("role", "user").put("text", "main-debug-message")))
+                    .put("tasks", new JSONArray().put(new JSONObject().put("conversationId", "worker-1")))
+                    .put("workerMessages", new JSONObject().put("worker-1", new JSONArray().put(new JSONObject().put("role", "assistant").put("text", "worker-debug-message"))));
+            String export = MainActivity.debugHistory(synthetic);
+            assertTrue(export.contains("main-debug-message")); assertTrue(export.contains("worker-debug-message"));
+            assertTrue(export.contains("safe-model")); assertFalse("Debug export copied provider credentials", export.contains("synthetic-secret"));
+        } finally { stopAndIdle(h); }
+    }
+
     @Test public void activityRecreationKeepsWorker() throws Exception {
         RuntimeHost h = scriptedHost();
         try {

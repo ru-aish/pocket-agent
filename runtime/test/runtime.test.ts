@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {PocketRuntime,NativeBridge} from '../src/runtime.js';
+import {PocketRuntime,NativeBridge,DEFAULT_MAIN_PROMPT} from '../src/runtime.js';
 import {delay} from '../src/scripted.js';
 import {AssistantMessageEventStream,validateToolArguments} from '@earendil-works/pi-ai';
 import {toolResult,MobileSubagentParams,nativeTools} from '../src/tools.js';
@@ -301,6 +301,71 @@ test('fixture never retries unknown mutations or stale errors without a pre-disp
   assert.equal(bridge.tools.filter(x=>x.name==='phone_act').length,1);
   assert.match(r.state().tasks[0].output,/Fixture failed/);
  }
+});
+
+test('custom main system prompt persists through turns, restart and provider reconfiguration',async()=>{
+ const bridge=new Bridge(),runtime=new PocketRuntime(bridge);
+ const custom='You are the custom main Pocket Agent. Keep replies concise and verified.';
+ command(runtime,{action:'set_system_prompt',text:custom});
+ assert.equal(runtime.state().mainSystemPrompt,custom);
+ assert.match(runtime.main.agent.state.systemPrompt,/custom main Pocket Agent/);
+ command(runtime,{action:'send',text:'hello custom prompt'});
+ await until(()=>!runtime.state().active);
+ assert.match(String((runtime.main.messages[0] as any).content),/custom main Pocket Agent/,'memory injection must preserve the custom main prompt');
+ bridge.credentials={authMode:'scripted',model:'scripted'};
+ command(runtime,{action:'configure'});
+ assert.equal(runtime.state().mainSystemPrompt,custom);
+ assert.match(runtime.main.agent.state.systemPrompt,/custom main Pocket Agent/,'provider rebuild must reuse the custom prompt');
+ const restored=new PocketRuntime(bridge);
+ assert.equal(restored.state().mainSystemPrompt,custom,'durable state restores the custom prompt');
+ assert.match(restored.main.agent.state.systemPrompt,/custom main Pocket Agent/);
+ command(restored,{action:'set_system_prompt',reset:true});
+ assert.equal(restored.state().mainSystemPrompt,DEFAULT_MAIN_PROMPT);
+ assert.equal(bridge.state.mainSystemPrompt,DEFAULT_MAIN_PROMPT,'reset persists the built-in default');
+});
+
+test('paused main with retained inbox can still apply provider and prompt settings',()=>{
+ const bridge=new Bridge(),runtime=new PocketRuntime(bridge),internal=runtime as any;
+ internal.mainPaused=true;internal.inbox=[{type:'user',text:'retained while context is full'}];
+ command(runtime,{action:'configure',systemPrompt:'Prompt updated while paused'});
+ assert.equal(runtime.state().mainSystemPrompt,'Prompt updated while paused');
+ assert.equal(runtime.state().mainPaused,true);assert.equal(internal.inbox.length,1,'settings must not discard paused queued work');
+});
+
+test('new main thread clears old main delivery but retains a resumable worker',async()=>{
+ const bridge=new Bridge(),runtime=new PocketRuntime(bridge),internal=runtime as any;
+ command(runtime,{action:'send',text:'delegate fixture delay=80'});
+ await until(()=>runtime.state().tasks[0]?.status==='running'&&!runtime.busy,4000);
+ const id=runtime.state().tasks[0].conversationId;
+ internal.mainPaused=true;
+ await until(()=>runtime.state().tasks[0]?.status==='completed',8000);
+ assert.ok(internal.inbox.some((item:any)=>item.type==='completion'),'worker completion should be pending for the old main thread');
+ assert.equal(runtime.runtime.conversation(id).generations.at(-1)!.receipts.model,false);
+ const workerMessages=structuredClone(runtime.state().workerMessages);
+ internal.inbox.push({type:'user',text:'stale queued user turn'});
+ command(runtime,{action:'new_main'});
+ assert.deepEqual(runtime.state().messages,[]);assert.equal(runtime.state().mainTurns,0);assert.deepEqual(internal.inbox,[]);
+ assert.equal(runtime.state().tasks[0].conversationId,id,'retained worker identity must survive a main-thread reset');
+ assert.deepEqual(runtime.state().workerMessages,workerMessages,'worker transcript must survive a main-thread reset');
+ assert.equal(runtime.runtime.conversation(id).generations.at(-1)!.receipts.model,true,'suppressed model completion must be acknowledged');
+ command(runtime,{action:'send',conversationId:id,text:'Follow up delay=10'});
+ await until(()=>runtime.state().tasks[0].generation===2&&runtime.state().tasks[0].status==='completed',8000);
+ assert.equal(runtime.state().tasks[0].conversationId,id,'worker must remain resumable after the main reset');
+ assert.equal(bridge.state.mainMessages.filter((m:any)=>m.role==='user'||m.role==='assistant').length,0,'durable main transcript remains fresh after direct worker follow-up');
+ internal.busy=true;
+ const rejected=JSON.parse(runtime.dispatch(JSON.stringify({action:'new_main'})));
+ internal.busy=false;
+ assert.equal(rejected.ok,false);assert.match(rejected.error,/Stop active work/);
+});
+
+test('fresh-main startup intent discards persisted main work before automatic resume',()=>{
+ const bridge=new Bridge();
+ bridge.state={freshMainRequested:true,mainSystemPrompt:'Persisted custom prompt',mainMessages:[{role:'user',content:[{type:'text',text:'old main request'}],timestamp:1}],inbox:[{type:'user',text:'old queued request'}],mainTurns:9,mainPaused:true,busy:true,lastError:'old failure',observationPending:['old observation']};
+ const runtime=new PocketRuntime(bridge),state=runtime.state();
+ assert.deepEqual(state.messages,[]);assert.equal(state.mainTurns,0);assert.equal(state.mainPaused,false);assert.equal(state.mainInterrupted,false);assert.equal(state.lastError,null);
+ assert.equal(state.mainSystemPrompt,'Persisted custom prompt');assert.deepEqual((runtime as any).inbox,[]);assert.deepEqual((runtime as any).observationPending,[]);
+ assert.equal(bridge.state.freshMainRequested,undefined,'startup intent is consumed by the first durable checkpoint');
+ assert.deepEqual(bridge.state.mainMessages.filter((m:any)=>m.role==='user'||m.role==='assistant'),[]);
 });
 
 test('account credentials stay redacted from durable state and events after provider changes',async()=>{

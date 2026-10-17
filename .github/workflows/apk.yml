@@ -69,6 +69,7 @@ jobs:
             set -e
             ./gradlew --no-daemon :app:connectedReleaseAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=dev.pocket.agent.VoicePipelineDeviceTest
             ./gradlew --no-daemon :app:connectedReleaseAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=dev.pocket.agent.VoiceAssistantDeviceTest
+            ./gradlew --no-daemon :app:connectedReleaseAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=dev.pocket.agent.LifecycleDeviceTest#mainThreadPromptAndDebugControlsWorkOnDevice
             ./gradlew --no-daemon -PdevEmulatorTest :app:connectedDevelopmentAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=dev.pocket.agent.DevBridgeDeviceTest
       - name: Upload emulator test report
         if: always()
