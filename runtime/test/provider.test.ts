@@ -137,6 +137,9 @@ test('OpenCode and Nebius are fixed Chat Completions providers',()=>{
  assert.equal(open.api,'openai-completions');
  assert.equal(open.provider,'opencode');
  assert.equal(open.baseUrl,'https://opencode.ai/inference/openai/v1');
+ assert.deepEqual(open.input,['text']);
+ const openVision=modelFor({mode:'opencode',model:'nemotron-3.5-super-vl-free'},{authMode:'opencode',model:'nemotron-3.5-super-vl-free'});
+ assert.deepEqual(openVision.input,['text','image']);
  const nebius=modelFor({mode:'nebius',model:'zai-org/GLM-5.3-Flash'},{authMode:'nebius',apiKey:'secret',model:'zai-org/GLM-5.3-Flash'});
  assert.equal(nebius.api,'openai-completions');
  assert.equal(nebius.provider,'nebius');
