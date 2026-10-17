@@ -189,3 +189,47 @@ test('keyed OpenCode and Nebius inference send the configured bearer credential'
    assert.equal(result.stopReason,'stop');
  }
 });
+
+
+test('fixed OpenCode timeout remains active while the SSE response body is stalled',async()=>{
+ const originalTimeout=AbortSignal.timeout;
+ const timeoutController=new AbortController();
+ let wireSignal:AbortSignal|undefined,bodyAborted=false;
+ (AbortSignal as any).timeout=(ms:number)=>{
+   assert.equal(ms,120000);
+   return timeoutController.signal;
+ };
+ try {
+   const config={mode:'opencode' as const,model:'beam-free'};
+   const credentials={authMode:'opencode',apiKey:'open-secret',model:'beam-free'};
+   const fetcher:typeof fetch=async(_input,init)=>{
+     wireSignal=init?.signal as AbortSignal|undefined;
+     assert.ok(wireSignal);
+     const body=new ReadableStream<Uint8Array>({
+       start(controller) {
+         controller.enqueue(new TextEncoder().encode('data: '+JSON.stringify({
+           id:'chatcmpl-stall',object:'chat.completion.chunk',created:1,model:'beam-free',
+           choices:[{index:0,delta:{role:'assistant',content:'partial'},finish_reason:null}],
+         })+'\n\n'));
+         wireSignal!.addEventListener('abort',()=>{
+           bodyAborted=true;
+           controller.error(new DOMException('timed out','AbortError'));
+         },{once:true});
+       },
+     });
+     return new Response(body,{headers:{'content-type':'text/event-stream'}});
+   };
+   const stream=await makeStream(config,credentials,'main')(
+     modelFor(config,credentials),
+     {messages:[{role:'user',content:[{type:'text',text:'stall'}],timestamp:Date.now()}]},
+     {fetch:fetcher},
+   );
+   timeoutController.abort();
+   const result=await stream.result();
+   assert.equal(bodyAborted,true);
+   assert.equal(wireSignal?.aborted,true);
+   assert.equal(result.stopReason,'error');
+ } finally {
+   (AbortSignal as any).timeout=originalTimeout;
+ }
+});
