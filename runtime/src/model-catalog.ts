@@ -22,7 +22,8 @@ export async function discoverProviderModels(
   if (mode !== 'opencode' && !token?.trim()) throw new Error('Save a provider credential before discovering models.');
   const url = account ? CODEX_MODELS_URL : mode === 'opencode' ? OPENCODE_MODELS_URL : current.baseUrl.replace(/\/$/, '') + '/models';
   const headers: Record<string,string> = {Accept: 'application/json'};
-  if (token?.trim()) headers.Authorization = 'Bearer ' + token;
+  // OpenCode's catalog is public; never send a Console service-account key to that separate public origin.
+  if (mode !== 'opencode' && token?.trim()) headers.Authorization = 'Bearer ' + token;
   if (account) headers['ChatGPT-Account-Id'] = auth!.accountId;
   let response: Response;
   try {
