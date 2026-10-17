@@ -73,6 +73,7 @@ test('OpenCode discovery uses the fixed catalog, permits anonymous reads and exp
      {id:'big-pickle'},
      {id:'beam-free'},
      {id:'nemotron-3.5-lightning-free'},
+     {id:'jev-1.13-free'},
      {id:'gpt-6-sol'},
      {id:'paid-model'},
    ]});
