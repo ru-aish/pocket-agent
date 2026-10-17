@@ -27,8 +27,8 @@ public final class CredentialStore {
     public static final String OPENCODE_ENDPOINT = "https://opencode.ai/inference/openai/v1";
     public static final String OPENCODE_MODEL = "big-pickle";
     public static final String NEBIUS = "nebius";
-    public static final String NEBIUS_ENDPOINT = "https://api.studio.nebius.ai/v1";
-    public static final String NEBIUS_MODEL = "Qwen/Qwen3-30B-A3B";
+    public static final String NEBIUS_ENDPOINT = "https://api.tokenfactory.nebius.com/v1";
+    public static final String NEBIUS_MODEL = "zai-org/GLM-5.3-Flash";
     private static final String BUILTIN_PROVIDER_REVISION = "builtin-scripted-v1";
     private final Context context;
     public CredentialStore(Context context) { this.context = context.getApplicationContext(); }
