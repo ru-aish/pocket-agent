@@ -129,7 +129,7 @@ final class NativeTools implements AutoCloseable {
         for(int attempt=0;attempt<12;attempt++) {
             try {
                 ControlBackend.Observation observed=backend.observe(a.optBoolean("include_image",false),a.optInt("max_image_dimension",1280),a.optInt("max_nodes",150));
-                if(displays.observationReady(owner,observed.packageName())) {o=observed;break;}
+                if(displays.observationReady(owner,observed)) {o=observed;break;}
             } catch(ControlException notReady) {
                 if(notReady.code!=NOT_READY)throw notReady;
             }
