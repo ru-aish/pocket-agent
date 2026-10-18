@@ -92,7 +92,7 @@ final class AgentDisplayCoordinator implements AutoCloseable {
     }
     synchronized void markTransition(String owner) {
         pendingPackages.remove(owner);
-        pendingUntil.put(owner,android.os.SystemClock.uptimeMillis()+900);
+        pendingUntil.put(owner,android.os.SystemClock.uptimeMillis()+1600);
     }
     synchronized void showClock(String owner,String screen) throws ControlException {
         int id=display(owner);client().showClock(id,screen);

@@ -57,3 +57,16 @@ test('disconnected backend relinquishes lease so a subsequent observe can reacqu
   assert.equal(reservations,2);
   assert.equal(drops,2);
 });
+
+test('transient pending-window reads retain the display lease for the next observation',async()=>{
+  let calls=0,releases=0;
+  const host={ensureDisplay:async()=>({status:'acquired'}),releaseScreen:()=>{releases++;},dropPriorImages:()=>{},call:()=>{
+    calls++;
+    return calls===1?{isError:true,code:'NOT_READY',message:'Window launch still pending; observe again without replacing the display lease'}:{snapshot_id:'ready-screen',nodes:[]};
+  }};
+  const observe=nativeTools(host,'test-owner').find((tool:any)=>tool.name==='phone_observe')!;
+  assert.equal((await observe.execute('first',{})).details.code,'NOT_READY');
+  assert.equal(releases,0,'an app launch delay must not destroy its display');
+  assert.equal((await observe.execute('second',{})).details.snapshot_id,'ready-screen');
+  assert.equal(releases,0);
+});

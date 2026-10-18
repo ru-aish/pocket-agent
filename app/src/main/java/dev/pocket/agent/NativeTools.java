@@ -132,7 +132,7 @@ final class NativeTools implements AutoCloseable {
             }
             if(attempt<11)Thread.sleep(200);
         }
-        if(o==null)throw new ControlException(NOT_READY,"Virtual display launch is still pending; observe again");
+        if(o==null)throw new ControlException(NOT_READY,"Window launch still pending; observe again without replacing the display lease");
         JSONArray nodes=new JSONArray();
         for(ControlBackend.Node n:o.nodes()) nodes.put(Json.obj("index",n.index(),"resource_id",n.resourceId(),"text",n.text(),"description",n.description(),"role",n.role(),
             "bounds",Json.obj("left",n.left(),"top",n.top(),"right",n.right(),"bottom",n.bottom()),"enabled",n.enabled(),"focused",n.focused(),"editable",n.editable(),"clickable",n.clickable(),"long_clickable",n.longClickable(),"scrollable",n.scrollable()));
@@ -198,6 +198,7 @@ final class NativeTools implements AutoCloseable {
                     displays.key(owner,key);
                     result=new ControlBackend.Result("dispatched","Display-targeted key accepted; task outcome not yet verified");
                 }else result=screen(owner).execute(action);
+                displays.markTransition(owner);
                 return Json.tool(Json.obj("status",result.status(),"message",result.message()));
             }
             case "phone_apps": {
