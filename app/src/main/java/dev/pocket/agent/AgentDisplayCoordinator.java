@@ -2,6 +2,7 @@ package dev.pocket.agent;
 
 import android.content.Context;
 import dev.pocket.android.AndroidScreenBackend;
+import dev.pocket.control.ControlBackend;
 import dev.pocket.control.ControlException;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -15,6 +16,8 @@ final class AgentDisplayCoordinator implements AutoCloseable {
     private final Map<String,Integer> displays=new LinkedHashMap<>();
     private final Map<String,String> pendingPackages=new LinkedHashMap<>();
     private final Map<String,Long> pendingUntil=new LinkedHashMap<>();
+    private final Map<String,String> pendingScreens=new LinkedHashMap<>();
+    private final Map<String,String> lastScreens=new LinkedHashMap<>();
     private ShizukuDisplayClient client;
 
     AgentDisplayCoordinator(Context context) {this.context=context.getApplicationContext();}
@@ -82,31 +85,48 @@ final class AgentDisplayCoordinator implements AutoCloseable {
         client().launch(display(owner),component);
         android.content.ComponentName target=android.content.ComponentName.unflattenFromString(component);
         pendingUntil.put(owner,android.os.SystemClock.uptimeMillis()+450);
+        pendingScreens.remove(owner);
         if(target!=null)pendingPackages.put(owner,target.getPackageName());
     }
-    synchronized boolean observationReady(String owner,String packageName) {
+    // A clock or browser can navigate within the *same* package. The source
+    // window must actually change; a fixed post-launch delay alone is not proof.
+    private static String signature(ControlBackend.Observation observation) {
+        return observation.packageName()+"|"+observation.windowId()+"|"+observation.nodes();
+    }
+    private synchronized String beforeLaunch(String owner) {
+        try {return signature(screen(owner).observe(false,1280,150));}
+        catch(ControlException unavailable) {return lastScreens.get(owner);}
+    }
+    synchronized boolean observationReady(String owner,ControlBackend.Observation observation) {
         Long delay=pendingUntil.get(owner);
-        if(delay!=null) {
-            if(android.os.SystemClock.uptimeMillis()<delay)return false;
-            pendingUntil.remove(owner);
-        }
+        if(delay!=null && android.os.SystemClock.uptimeMillis()<delay)return false;
         String expected=pendingPackages.get(owner);
-        if(expected==null)return true;
-        if(!expected.equals(packageName))return false;
+        if(expected!=null&&!expected.equals(observation.packageName()))return false;
+        String visible=signature(observation);
+        String previous=pendingScreens.get(owner);
+        if(previous!=null&&previous.equals(visible))return false;
+        pendingUntil.remove(owner);
         pendingPackages.remove(owner);
+        pendingScreens.remove(owner);
+        lastScreens.put(owner,visible);
         return true;
     }
     synchronized void openUrl(String owner,String url) throws ControlException {
+        String previous=beforeLaunch(owner);
         int id=display(owner);client().openUrl(id,url);
         markTransition(owner);
+        if(previous!=null)pendingScreens.put(owner,previous);
     }
     synchronized void markTransition(String owner) {
         pendingPackages.remove(owner);
+        pendingScreens.remove(owner);
         pendingUntil.put(owner,android.os.SystemClock.uptimeMillis()+1600);
     }
     synchronized void showClock(String owner,String screen) throws ControlException {
+        String previous=beforeLaunch(owner);
         int id=display(owner);client().showClock(id,screen);
         markTransition(owner);
+        if(previous!=null)pendingScreens.put(owner,previous);
     }
     synchronized void key(String owner,int code) throws ControlException {client().key(display(owner),code);}
 
@@ -114,6 +134,8 @@ final class AgentDisplayCoordinator implements AutoCloseable {
         Integer id=displays.remove(owner);
         pendingPackages.remove(owner);
         pendingUntil.remove(owner);
+        pendingScreens.remove(owner);
+        lastScreens.remove(owner);
         if(id!=null) {
             AgentAccessibility observer=AgentAccessibility.connected;
             if(observer!=null) observer.release(id);
@@ -128,6 +150,8 @@ final class AgentDisplayCoordinator implements AutoCloseable {
         displays.clear();
         pendingPackages.clear();
         pendingUntil.clear();
+        pendingScreens.clear();
+        lastScreens.clear();
     }
 
     synchronized int activeCount() {return displays.size();}
