@@ -20,6 +20,11 @@ final class AgentDisplayCoordinator implements AutoCloseable {
     AgentDisplayCoordinator(Context context) {this.context=context.getApplicationContext();}
 
     private synchronized ShizukuDisplayClient client() {
+        // A bind that never called back cannot be retried on the same client:
+        // its binding flag stays set. Retire the whole connection on timeout.
+        if(client!=null&&"service_start_timeout".equals(client.status())) {
+            ShizukuDisplayClient stuck=client;client=null;stuck.close();
+        }
         if(client==null) client=new ShizukuDisplayClient(context,this::invalidate);
         return client;
     }
@@ -43,7 +48,12 @@ final class AgentDisplayCoordinator implements AutoCloseable {
                 pendingPackages.put(owner,"com.android.settings");
                 pendingUntil.put(owner,android.os.SystemClock.uptimeMillis()+450);
             } catch(ControlException unavailable) {
-                // Acquisition still succeeds; callers can launch their desired app.
+                if(unavailable.code!=ACTION_REJECTED && unavailable.code!=UNSUPPORTED) {
+                    // Backend loss must not be misreported as an acquired lease.
+                    release(owner);
+                    throw unavailable;
+                }
+                // Only an unavailable optional Settings screen is tolerable.
             }
             return Json.obj("status","acquired","display_id",id,"owner",owner);
         } catch(ControlException | RuntimeException error) {

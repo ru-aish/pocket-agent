@@ -40,21 +40,50 @@ export function toolResult(data:any):any {
     for(const [key,child] of Object.entries(value))if(key!=='nodes')collect(child);
   };
   collect(text);
+  const bytes=(json:string)=>Buffer.byteLength(json,'utf8');
   let json=JSON.stringify(text??null);
-  while(Buffer.byteLength(json,'utf8')>32000){
-    const target=observations.filter(x=>x.nodes.length).sort((a,b)=>b.nodes.length-a.nodes.length)[0];
+  while(bytes(json)>32000){
+    const target=observations.filter(x=>x.nodes.length)
+      .sort((a,b)=>bytes(JSON.stringify(b.nodes))-bytes(JSON.stringify(a.nodes)))[0];
     if(!target)break;
-    const before=target.nodes.length;
-    const retained=Math.floor(before/2);
-    target.nodes=target.nodes.slice(0,retained);
-    target.nodes_omitted=(target.nodes_omitted??0)+before-retained;
+    const nodes=target.nodes as any[];
+    const omitted=target.nodes_omitted??0;
+    // Find the largest useful prefix rather than dropping half the controls.
+    let low=0,high=nodes.length-1;
+    while(low<high){
+      const mid=Math.ceil((low+high)/2);
+      target.nodes=nodes.slice(0,mid);
+      target.nodes_omitted=omitted+nodes.length-mid;
+      target.nodes_truncated=true;
+      if(bytes(JSON.stringify(text??null))<=32000)low=mid;
+      else high=mid-1;
+    }
+    target.nodes=nodes.slice(0,low);
+    target.nodes_omitted=omitted+nodes.length-low;
     target.nodes_truncated=true;
     json=JSON.stringify(text??null);
   }
-  const overLimit=Buffer.byteLength(json,'utf8')>32000;
+  // Batch output can also overflow through multiple large *non-node* reads,
+  // such as two 20 KB notification pages. Never discard earlier writes or
+  // their receipts merely because subsequent read output was too verbose.
+  const truncatedReads:number[]=[];
+  const results=Array.isArray(text?.results)?text.results:[];
+  const readOnly=new Set(schemas.filter(s=>s.annotations?.readOnlyHint&&s.name!=='phone_operation').map(s=>s.name));
+  while(bytes(json)>32000){
+    const candidates=results.filter((entry:any)=>readOnly.has(entry.name)&&entry.result&&!entry.result.output_truncated);
+    const target=candidates.sort((a:any,b:any)=>bytes(JSON.stringify(b.result))-bytes(JSON.stringify(a.result)))[0];
+    if(!target)break;
+    target.result={isError:true,code:'OUTPUT_LIMIT',output_truncated:true,message:'Read output too large; request this read separately with narrower parameters.'};
+    truncatedReads.push(target.index);
+    text.output_truncated=true;
+    text.truncated_read_indices=truncatedReads;
+    text.retry_safe=false;
+    json=JSON.stringify(text??null);
+  }
+  const overLimit=bytes(json)>32000;
   const content:any[]=[{type:'text',text:overLimit?JSON.stringify({isError:true,code:'OUTPUT_LIMIT',message:'Native output exceeded 32 KB; narrow the query.'}):json}];
   if(latestImage)content.push(latestImage);
-  return {content,details:overLimit?{isError:true,code:'OUTPUT_LIMIT'}:text,isError:Boolean(data?.isError)||overLimit};
+  return {content,details:overLimit?{isError:true,code:'OUTPUT_LIMIT'}:text,isError:Boolean(data?.isError)||overLimit||truncatedReads.length>0};
 }
 export function nativeTools(host:any,owner:string,grant?:readonly string[]):any[] {
   return schemas.filter(s=>!grant || grant.includes(s.name)).map(s=>({
@@ -80,8 +109,14 @@ export function nativeTools(host:any,owner:string,grant?:readonly string[]):any[
       if(signal?.aborted)throw new Error('Cancelled before native dispatch');
       if(s.name==='phone_observe'||(s.name==='phone_batch'&&args.calls?.some((x:any)=>x.name==='phone_observe')))host.dropPriorImages(owner);
       const result=host.call('tool',{name:s.name,args,owner});
-      if(needsUi&&result?.isError&&result.code==='NOT_READY'&&
-        /virtual display|no virtual display|shizuku backend|display service/i.test(String(result.message??'')))
+      // A batch reports its failing nested observation in results[], not in
+      // the top-level code. Release only a genuinely lost display lease; keep
+      // earlier mutation receipts and never replay the batch's side effects.
+      const nestedFailure=s.name==='phone_batch'&&result?.status==='partial'&&Array.isArray(result.results)
+        ?result.results[result.stopped_at]?.result:undefined;
+      const failure=nestedFailure?.isError?nestedFailure:result;
+      if(needsUi&&failure?.isError&&failure.code==='NOT_READY'&&
+        /virtual display|no virtual display|shizuku backend|display service/i.test(String(failure.message??'')))
         host.releaseScreen?.(owner);
       return toolResult(result);
     },

@@ -70,3 +70,52 @@ test('transient pending-window reads retain the display lease for the next obser
   assert.equal((await observe.execute('second',{})).details.snapshot_id,'ready-screen');
   assert.equal(releases,0);
 });
+
+test('batch nested disconnected read releases lease, preserves completed mutation, and does not replay it',async()=>{
+  const receipt={operation_id:'accepted-once',status:'verified'};
+  const calls:any[]=[];let releases=0;
+  const host={ensureDisplay:async()=>({status:'acquired'}),releaseScreen:()=>{releases++;},dropPriorImages:()=>{},call:(_method:string,payload:any)=>{
+    calls.push(payload.name);
+    if(payload.name==='phone_batch')return {isError:true,status:'partial',stopped_at:1,retry_safe:false,results:[
+      {index:0,name:'phone_act',result:receipt},
+      {index:1,name:'phone_observe',result:{isError:true,code:'NOT_READY',message:'Shizuku backend disconnected'}},
+    ]};
+    return {snapshot_id:'reacquired',nodes:[]};
+  }};
+  const tools=nativeTools(host,'batch-owner');
+  const batch=tools.find((x:any)=>x.name==='phone_batch')!;
+  const result=await batch.execute('batch',{calls:[{name:'phone_act',args:{}},{name:'phone_observe',args:{}}]});
+  assert.equal(result.isError,true);
+  assert.deepEqual(result.details.results[0].result,receipt);
+  assert.equal(result.details.stopped_at,1);
+  assert.equal(releases,1,'nested read failure releases only the invalid lease');
+  const next=await tools.find((x:any)=>x.name==='phone_observe')!.execute('read-only-retry',{});
+  assert.equal(next.details.snapshot_id,'reacquired');
+  assert.deepEqual(calls,['phone_batch','phone_observe'],'already completed mutation is not replayed');
+});
+
+test('batch with two oversized non-node reads keeps completed mutation receipts',()=>{
+  const receipt={operation_id:'dont-repeat-this',status:'verified',receipt:{sent:true}};
+  const result=toolResult({status:'completed',results:[
+    {index:0,name:'phone_act',result:receipt},
+    {index:1,name:'phone_notifications',result:{notifications:[{text:'a'.repeat(20000)}]}},
+    {index:2,name:'phone_calendar_events',result:{events:[{text:'b'.repeat(20000)}]}},
+  ]});
+  assert.ok(Buffer.byteLength(result.content[0].text,'utf8')<=32000);
+  assert.deepEqual(result.details.results[0].result,receipt);
+  assert.equal(result.details.output_truncated,true);
+  assert.equal(result.details.retry_safe,false);
+  assert.equal(result.details.truncated_read_indices.length,1);
+  assert.equal(result.isError,true);
+  assert.equal(result.details.results[result.details.truncated_read_indices[0]].result.code,'OUTPUT_LIMIT');
+  assert.notEqual(result.details.code,'OUTPUT_LIMIT','batch receipts must not be lost');
+});
+
+test('barely oversized accessibility response keeps nearly all selectors',()=>{
+  const nodes=Array.from({length:150},(_,index)=>({index,text:'a'.repeat(195)}));
+  const result=toolResult({snapshot_id:'retain-most',nodes,nodes_truncated:false});
+  assert.equal(result.isError,false);
+  assert.ok(result.details.nodes.length>110,'small overflow must not drop half the tree');
+  assert.ok(result.details.nodes.length<150);
+  assert.equal(result.details.nodes.length+result.details.nodes_omitted,150);
+});

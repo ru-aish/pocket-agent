@@ -119,17 +119,22 @@ final class NativeTools implements AutoCloseable {
     private static String string(JSONObject a,String name) throws Exception {return a.has(name)?a.getString(name):null;}
     private JSONObject outcome(AndroidSystemActions.Outcome value) {return Json.tool(Json.obj("status",value.status(),"reference",value.reference(),"message",value.message()));}
     private JSONObject observation(JSONObject a,String owner) throws Exception {
+        // Validate the lease outside retry: a missing/disconnected display is
+        // an actionable backend error, not a transient accessibility window.
+        AndroidScreenBackend backend=screen(owner);
         ControlBackend.Observation o=null;
         // Accessibility often emits its first virtual-window event after the
         // screen or app launch returns. Never report the previous app as a
         // fresh observation while a requested launch is still in flight.
         for(int attempt=0;attempt<12;attempt++) {
             try {
-                ControlBackend.Observation observed=screen(owner).observe(a.optBoolean("include_image",false),a.optInt("max_image_dimension",1280),a.optInt("max_nodes",150));
+                ControlBackend.Observation observed=backend.observe(a.optBoolean("include_image",false),a.optInt("max_image_dimension",1280),a.optInt("max_nodes",150));
                 if(displays.observationReady(owner,observed.packageName())) {o=observed;break;}
             } catch(ControlException notReady) {
                 if(notReady.code!=NOT_READY)throw notReady;
             }
+            // A lease that vanished mid-capture must retain its original error.
+            displays.display(owner);
             if(attempt<11)Thread.sleep(200);
         }
         if(o==null)throw new ControlException(NOT_READY,"Window launch still pending; observe again without replacing the display lease");
