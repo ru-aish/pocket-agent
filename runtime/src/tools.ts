@@ -41,7 +41,7 @@ export function toolResult(data:any):any {
   };
   collect(text);
   let json=JSON.stringify(text??null);
-  while(json.length>32000){
+  while(Buffer.byteLength(json,'utf8')>32000){
     const target=observations.filter(x=>x.nodes.length).sort((a,b)=>b.nodes.length-a.nodes.length)[0];
     if(!target)break;
     const before=target.nodes.length;
@@ -51,7 +51,7 @@ export function toolResult(data:any):any {
     target.nodes_truncated=true;
     json=JSON.stringify(text??null);
   }
-  const overLimit=json.length>32000;
+  const overLimit=Buffer.byteLength(json,'utf8')>32000;
   const content:any[]=[{type:'text',text:overLimit?JSON.stringify({isError:true,code:'OUTPUT_LIMIT',message:'Native output exceeded 32 KB; narrow the query.'}):json}];
   if(latestImage)content.push(latestImage);
   return {content,details:overLimit?{isError:true,code:'OUTPUT_LIMIT'}:text,isError:Boolean(data?.isError)||overLimit};

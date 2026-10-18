@@ -8,7 +8,7 @@ test('default full accessibility dump stays within text bound and retains snapsh
   const image={data:'dGVzdA==',mimeType:'image/png'};
   const returned=toolResult({snapshot_id:'current-snapshot',captured_at_ms:1234,package_name:'com.google.android.youtube',nodes:crowdedNodes(),nodes_truncated:false,images:[image]});
   assert.equal(returned.isError,false);
-  assert.ok(returned.content[0].text.length<=32000);
+  assert.ok(Buffer.byteLength(returned.content[0].text,'utf8')<=32000);
   assert.deepEqual(JSON.parse(returned.content[0].text),returned.details);
   assert.equal(returned.details.snapshot_id,'current-snapshot');
   assert.equal(returned.details.package_name,'com.google.android.youtube');
@@ -26,7 +26,7 @@ test('nested batch trimming never discards earlier side effects or their receipt
     {index:2,name:'phone_observe',result:{snapshot_id:'second',nodes:crowdedNodes(),nodes_truncated:false}},
   ]});
   assert.equal(returned.isError,false);
-  assert.ok(returned.content[0].text.length<=32000);
+  assert.ok(Buffer.byteLength(returned.content[0].text,'utf8')<=32000);
   assert.deepEqual(returned.details.results[0].result,receipt);
   assert.equal(returned.details.results[1].result.snapshot_id,'first');
   assert.equal(returned.details.results[2].result.snapshot_id,'second');
