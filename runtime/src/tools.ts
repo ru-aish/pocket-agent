@@ -31,10 +31,30 @@ export function toolResult(data:any):any {
     return result;
   };
   const text=withoutImages(data);
-  const json=JSON.stringify(text??null);
-  const content:any[]=[{type:'text',text:json.length>32000?JSON.stringify({isError:true,code:'OUTPUT_LIMIT',message:'Native output exceeded 32 KB; narrow the query.'}):json}];
+  // Bound busy accessibility trees without discarding screenshots or receipts.
+  const observations:any[]=[];
+  const collect=(value:any):void=>{
+    if(!value||typeof value!=='object')return;
+    if(Array.isArray(value)){for(const entry of value)collect(entry);return;}
+    if(Array.isArray(value.nodes))observations.push(value);
+    for(const [key,child] of Object.entries(value))if(key!=='nodes')collect(child);
+  };
+  collect(text);
+  let json=JSON.stringify(text??null);
+  while(json.length>32000){
+    const target=observations.filter(x=>x.nodes.length).sort((a,b)=>b.nodes.length-a.nodes.length)[0];
+    if(!target)break;
+    const before=target.nodes.length;
+    const retained=Math.floor(before/2);
+    target.nodes=target.nodes.slice(0,retained);
+    target.nodes_omitted=(target.nodes_omitted??0)+before-retained;
+    target.nodes_truncated=true;
+    json=JSON.stringify(text??null);
+  }
+  const overLimit=json.length>32000;
+  const content:any[]=[{type:'text',text:overLimit?JSON.stringify({isError:true,code:'OUTPUT_LIMIT',message:'Native output exceeded 32 KB; narrow the query.'}):json}];
   if(latestImage)content.push(latestImage);
-  return {content,details:json.length>32000?{isError:true,code:'OUTPUT_LIMIT'}:text,isError:Boolean(data?.isError)||json.length>32000};
+  return {content,details:overLimit?{isError:true,code:'OUTPUT_LIMIT'}:text,isError:Boolean(data?.isError)||overLimit};
 }
 export function nativeTools(host:any,owner:string,grant?:readonly string[]):any[] {
   return schemas.filter(s=>!grant || grant.includes(s.name)).map(s=>({
