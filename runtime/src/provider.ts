@@ -245,6 +245,8 @@ export function makeStream(config: ProviderConfig, credentials: ProviderCredenti
       const supported=advertisedReasoning(credentials,model.id);
       if (supported && !supported.includes(reasoning))
         return failure(model,`Reasoning effort ${reasoning} is not supported by ${model.id}. Choose one of: ${supported.join(', ')}.`);
+      if (!supported && reasoning==='xhigh')
+        return failure(model,'Extra high reasoning requires discovered model support; choose High or discover a model that advertises Extra high.');
       if (account && !supported && reasoning!=='low')
         return failure(model,'Discover models before using a non-Low reasoning effort with Codex account auth.');
       const shared = {...options,apiKey,transport:'sse' as const,maxRetries:0,timeoutMs:120000,reasoning};
