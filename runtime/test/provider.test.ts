@@ -77,13 +77,30 @@ test('direct Codex wire has fixed destination, explicit strict:false and a struc
 });
 
 test('direct Codex uses the selected reasoning effort',async()=>{
- const credentials=accountCredential(),config={...accountConfig,reasoning:'high' as const};let wire:any;
+ const credentials={...accountCredential(),reasoningModel:'gpt-6-luna',reasoningLevels:['low','medium','high','xhigh'] as const},config={...accountConfig,reasoning:'high' as const};let wire:any;
  const stream=makeStream(config,credentials,'main');
  const result=await(await stream(modelFor(config,credentials),{messages:[]},{fetch:async(_input,init)=>{
    wire=requestBody(init);return codexResponse([]);
  }})).result();
  assert.equal(result.stopReason,'stop');
  assert.equal(wire.reasoning?.effort,'high');
+});
+
+test('direct Codex rejects unsupported advertised reasoning instead of silently clamping',async()=>{
+ const credentials={...accountCredential(),reasoningModel:'gpt-6-luna',reasoningLevels:['low','medium'] as const};
+ const config={...accountConfig,reasoning:'xhigh' as const};let calls=0;
+ const result=await(await makeStream(config,credentials,'main')(modelFor(config,credentials),{messages:[]},{fetch:async()=>{calls++;return codexResponse([]);}})).result();
+ assert.equal(calls,0);
+ assert.equal(result.stopReason,'error');
+ assert.match(result.errorMessage??'',/not supported/);
+});
+
+test('direct Codex requires discovered capabilities before non-low reasoning',async()=>{
+ const credentials=accountCredential(),config={...accountConfig,reasoning:'high' as const};let calls=0;
+ const result=await(await makeStream(config,credentials,'main')(modelFor(config,credentials),{messages:[]},{fetch:async()=>{calls++;return codexResponse([]);}})).result();
+ assert.equal(calls,0);
+ assert.equal(result.stopReason,'error');
+ assert.match(result.errorMessage??'',/Discover models/);
 });
 
 test('direct Codex rejects every configured endpoint override',()=>{
