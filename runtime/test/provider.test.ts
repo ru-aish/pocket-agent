@@ -105,6 +105,15 @@ test('direct Codex rejects unsupported advertised reasoning instead of silently 
  assert.match(result.errorMessage??'',/not supported/);
 });
 
+test('unknown extra-high support is rejected instead of being silently clamped',async()=>{
+ const config={mode:'openai' as const,endpoint:'https://api.openai.com/v1',model:'gpt-6-sol',reasoning:'xhigh' as const};
+ let calls=0;
+ const result=await(await makeStream(config,{authMode:'openai',apiKey:'synthetic-key'},'main')(modelFor(config,{authMode:'openai',apiKey:'synthetic-key'}),{messages:[]},{fetch:async()=>{calls++;return codexResponse([]);}})).result();
+ assert.equal(calls,0);
+ assert.equal(result.stopReason,'error');
+ assert.match(result.errorMessage??'',/Extra high reasoning requires discovered model support/);
+});
+
 test('direct Codex requires discovered capabilities before non-low reasoning',async()=>{
  const credentials=accountCredential(),config={...accountConfig,reasoning:'high' as const};let calls=0;
  const result=await(await makeStream(config,credentials,'main')(modelFor(config,credentials),{messages:[]},{fetch:async()=>{calls++;return codexResponse([]);}})).result();
