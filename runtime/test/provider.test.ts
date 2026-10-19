@@ -77,7 +77,7 @@ test('direct Codex wire has fixed destination, explicit strict:false and a struc
 });
 
 test('direct Codex uses the selected reasoning effort',async()=>{
- const credentials={...accountCredential(),reasoningModel:'gpt-6-luna',reasoningLevels:['low','medium','high','xhigh'] as const},config={...accountConfig,reasoning:'high' as const};let wire:any;
+ const credentials={...accountCredential(),reasoningModel:'gpt-6-luna',reasoningLevels:['low','medium','high','xhigh'] as any},config={...accountConfig,reasoning:'high' as const};let wire:any;
  const stream=makeStream(config,credentials,'main');
  const result=await(await stream(modelFor(config,credentials),{messages:[]},{fetch:async(_input,init)=>{
    wire=requestBody(init);return codexResponse([]);
@@ -87,7 +87,7 @@ test('direct Codex uses the selected reasoning effort',async()=>{
 });
 
 test('direct Codex rejects unsupported advertised reasoning instead of silently clamping',async()=>{
- const credentials={...accountCredential(),reasoningModel:'gpt-6-luna',reasoningLevels:['low','medium'] as const};
+ const credentials={...accountCredential(),reasoningModel:'gpt-6-luna',reasoningLevels:['low','medium'] as any};
  const config={...accountConfig,reasoning:'xhigh' as const};let calls=0;
  const result=await(await makeStream(config,credentials,'main')(modelFor(config,credentials),{messages:[]},{fetch:async()=>{calls++;return codexResponse([]);}})).result();
  assert.equal(calls,0);
