@@ -64,9 +64,16 @@ test('Codex account discovery uses fixed origin, account-scoped authorization an
    assert.equal(h.get('originator'),'pocket-agent');
    assert.equal(h.get('user-agent'),'PocketAgent');
    assert.equal(init?.redirect,'error');
-   return json({models:[{slug:'codex-strong',display_name:'Strong'},{slug:'codex-fast',display_name:'Fast'},{slug:'unavailable',supported_in_api:false}]});
+   return json({models:[
+     {slug:'codex-strong',display_name:'Strong',default_reasoning_level:'medium',supported_reasoning_levels:[{effort:'low'},{effort:'medium'},{effort:'high'},{effort:'max'}]},
+     {slug:'codex-fast',display_name:'Fast',default_reasoning_level:'low',supported_reasoning_levels:[{effort:'low'},{effort:'xhigh'}]},
+     {slug:'unavailable',supported_in_api:false},
+   ]});
  });
- assert.deepEqual(models,[{id:'codex-strong',name:'Strong'},{id:'codex-fast',name:'Fast'}]);
+ assert.deepEqual(models,[
+   {id:'codex-strong',name:'Strong',reasoningLevels:['low','medium','high'],defaultReasoning:'medium'},
+   {id:'codex-fast',name:'Fast',reasoningLevels:['low','xhigh'],defaultReasoning:'low'},
+ ]);
 });
 
 
