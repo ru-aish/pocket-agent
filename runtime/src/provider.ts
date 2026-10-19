@@ -27,6 +27,8 @@ export interface ProviderCredentials extends CodexCredentialInput {
   reasoning?: ReasoningLevel;
   reasoningModel?: string;
   reasoningLevels?: ReasoningLevel[];
+  providerRevision?: string;
+  reasoningProviderRevision?: string;
   authMode?: string;
 }
 type ProviderModel = Model<'openai-responses'> | Model<'openai-codex-responses'> | Model<'openai-completions'>;
@@ -49,7 +51,8 @@ function isRelay(config: ProviderConfig, credentials: ProviderCredentials): bool
   return ['codex', 'codexRelay', 'codex-relay'].includes(selectedMode(config, credentials));
 }
 function advertisedReasoning(credentials: ProviderCredentials, id: string): ReasoningLevel[] | undefined {
-  if (credentials.reasoningModel !== id || !Array.isArray(credentials.reasoningLevels)) return undefined;
+  if (credentials.reasoningModel !== id || !Array.isArray(credentials.reasoningLevels)
+      || !credentials.providerRevision || credentials.reasoningProviderRevision !== credentials.providerRevision) return undefined;
   const levels = credentials.reasoningLevels.filter((value,index,all)=>
     (REASONING_LEVELS as readonly string[]).includes(value) && all.indexOf(value)===index);
   return levels.length ? levels : undefined;
