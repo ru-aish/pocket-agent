@@ -88,6 +88,7 @@ public final class CredentialStore {
             }
             String selectedModel = allowed.getString("model");
             boolean sameIdentity = sameProviderIdentity(current, allowed);
+            String nextProviderRevision = providerRevision(current, allowed);
             JSONObject capabilitySource = sameIdentity && selectedModel.equals(settings.optString("reasoningModel")) ? settings
                     : sameIdentity && selectedModel.equals(current.optString("reasoningModel")) ? current : null;
             if (capabilitySource != null) {
@@ -95,9 +96,10 @@ public final class CredentialStore {
                 if (levels.length() > 0) {
                     allowed.put("reasoningModel", selectedModel);
                     allowed.put("reasoningLevels", levels);
+                    allowed.put("reasoningProviderRevision", nextProviderRevision);
                 }
             }
-            allowed.put("providerRevision", providerRevision(current, allowed));
+            allowed.put("providerRevision", nextProviderRevision);
             write(allowed);
         }
     }
@@ -114,11 +116,13 @@ public final class CredentialStore {
             if (!current.optString("accountId").equals(account.getString("accountId"))) throw new IllegalArgumentException("Refreshed account does not match the signed-in account");
             JSONObject allowed = new JSONObject().put("authMode", CODEX_ACCOUNT).put("model", model(current.optString("model", CODEX_MODEL)))
                     .put("reasoning", reasoning(current.optString("reasoning", DEFAULT_REASONING)));
-            if (allowed.getString("model").equals(current.optString("reasoningModel"))) {
+            if (allowed.getString("model").equals(current.optString("reasoningModel"))
+                    && current.optString("providerRevision").equals(current.optString("reasoningProviderRevision"))) {
                 JSONArray levels = reasoningLevels(current.optJSONArray("reasoningLevels"));
                 if (levels.length() > 0) {
                     allowed.put("reasoningModel", allowed.getString("model"));
                     allowed.put("reasoningLevels", levels);
+                    allowed.put("reasoningProviderRevision", current.optString("providerRevision"));
                 }
             }
             for (String field : new String[]{"accessToken", "refreshToken", "accountId", "expiresAt", "idToken"})
