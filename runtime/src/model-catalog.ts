@@ -3,7 +3,7 @@ import { ensureCodexCredentials } from './codex-auth.js';
 
 export interface CatalogModel { id: string; name: string }
 const CODEX_MODELS_URL = 'https://chatgpt.com/backend-api/codex/models';
-export const CODEX_MODELS_CLIENT_VERSION = '0.155.0';
+export const CODEX_MODELS_CLIENT_VERSION = '0.162.1';
 export const OPENCODE_MODELS_URL = 'https://opencode.ai/inference/v1/models';
 const MAX_CATALOG_BYTES = 512 * 1024;
 const MODEL_ID = /^[A-Za-z0-9._:/+@-]{1,160}$/;
