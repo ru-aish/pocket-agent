@@ -62,6 +62,7 @@ test('Codex account discovery uses fixed origin, account-scoped authorization an
    assert.equal(h.get('authorization'),'Bearer '+auth.accessToken);
    assert.equal(h.get('chatgpt-account-id'),auth.accountId);
    assert.equal(h.get('originator'),'pocket-agent');
+   assert.equal(h.get('user-agent'),'PocketAgent');
    assert.equal(init?.redirect,'error');
    return json({models:[{slug:'codex-strong',display_name:'Strong'},{slug:'codex-fast',display_name:'Fast'},{slug:'unavailable',supported_in_api:false}]});
  });
