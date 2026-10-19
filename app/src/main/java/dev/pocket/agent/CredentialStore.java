@@ -23,6 +23,7 @@ public final class CredentialStore {
     private static final Object LOCK = new Object();
     public static final String CODEX_ACCOUNT = "codex-account";
     public static final String CODEX_MODEL = "gpt-6-luna";
+    public static final String DEFAULT_REASONING = "low";
     public static final String OPENCODE = "opencode";
     public static final String OPENCODE_ENDPOINT = "https://opencode.ai/inference/openai/v1";
     public static final String OPENCODE_MODEL = "big-pickle";
@@ -41,13 +42,15 @@ public final class CredentialStore {
         return generator.generateKey();
     }
     public JSONObject get() throws Exception { synchronized (LOCK) {
-        JSONObject current = read();
-        if (!current.has("providerRevision")) { current.put("providerRevision", UUID.randomUUID().toString()); write(current); }
+        JSONObject current = read(); boolean changed = false;
+        if (!current.has("providerRevision")) { current.put("providerRevision", UUID.randomUUID().toString()); changed = true; }
+        if (!current.has("reasoning")) { current.put("reasoning", DEFAULT_REASONING); changed = true; }
+        if (changed) write(current);
         return current;
     } }
     private JSONObject read() throws Exception {
         String saved = context.getSharedPreferences("provider-secrets", Context.MODE_PRIVATE).getString("encrypted", null);
-        if (saved == null) return new JSONObject().put("authMode", "scripted").put("endpoint", "https://api.openai.com/v1").put("model", "gpt-4.1-mini").put("providerRevision", BUILTIN_PROVIDER_REVISION);
+        if (saved == null) return new JSONObject().put("authMode", "scripted").put("endpoint", "https://api.openai.com/v1").put("model", "gpt-4.1-mini").put("reasoning", DEFAULT_REASONING).put("providerRevision", BUILTIN_PROVIDER_REVISION);
         JSONObject envelope = new JSONObject(saved);
         Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
         cipher.init(Cipher.DECRYPT_MODE, key(), new GCMParameterSpec(128, Base64.decode(envelope.getString("iv"), Base64.NO_WRAP)));
@@ -68,7 +71,8 @@ public final class CredentialStore {
             validateEndpoint(endpoint, mode);
             if (OPENCODE.equals(mode) && settings.optString("apiKey").trim().isEmpty()) throw new IllegalArgumentException("Enter an OpenCode Console service-account key");
             if (NEBIUS.equals(mode) && settings.optString("apiKey").trim().isEmpty()) throw new IllegalArgumentException("Enter a Nebius API key");
-            JSONObject allowed = new JSONObject().put("authMode", mode);
+            JSONObject allowed = new JSONObject().put("authMode", mode)
+                    .put("reasoning", reasoning(settings.optString("reasoning", current.optString("reasoning", DEFAULT_REASONING))));
             if (CODEX_ACCOUNT.equals(mode)) {
                 JSONObject source = settings.has("accessToken") ? settings : current;
                 if (!CODEX_ACCOUNT.equals(source.optString("authMode")) && !settings.has("accessToken")) throw new IllegalArgumentException("Sign in or import an account first");
@@ -96,7 +100,8 @@ public final class CredentialStore {
                 if (!update.has(field)) throw new IllegalArgumentException("Refreshed account credentials are incomplete");
             JSONObject account = CodexAccountAuth.validateCredentials(update, true);
             if (!current.optString("accountId").equals(account.getString("accountId"))) throw new IllegalArgumentException("Refreshed account does not match the signed-in account");
-            JSONObject allowed = new JSONObject().put("authMode", CODEX_ACCOUNT).put("model", model(current.optString("model", CODEX_MODEL)));
+            JSONObject allowed = new JSONObject().put("authMode", CODEX_ACCOUNT).put("model", model(current.optString("model", CODEX_MODEL)))
+                    .put("reasoning", reasoning(current.optString("reasoning", DEFAULT_REASONING)));
             for (String field : new String[]{"accessToken", "refreshToken", "accountId", "expiresAt", "idToken"})
                 if (account.has(field)) allowed.put(field, account.get(field));
             String revision = current.optString("providerRevision");
@@ -108,7 +113,7 @@ public final class CredentialStore {
     public void signOutCodex() throws Exception {
         synchronized (LOCK) {
             JSONObject current = read();
-            if (CODEX_ACCOUNT.equals(current.optString("authMode"))) write(new JSONObject().put("authMode", "scripted").put("model", "scripted").put("endpoint", "https://api.openai.com/v1").put("providerRevision", UUID.randomUUID().toString()));
+            if (CODEX_ACCOUNT.equals(current.optString("authMode"))) write(new JSONObject().put("authMode", "scripted").put("model", "scripted").put("reasoning", DEFAULT_REASONING).put("endpoint", "https://api.openai.com/v1").put("providerRevision", UUID.randomUUID().toString()));
         }
     }
     private static String canonicalMode(String mode) {
@@ -130,6 +135,10 @@ public final class CredentialStore {
     private static String providerRevision(JSONObject current, JSONObject next) {
         String revision = current.optString("providerRevision");
         return !revision.isEmpty() && sameProviderIdentity(current, next) ? revision : UUID.randomUUID().toString();
+    }
+    private static String reasoning(String value) {
+        if (value == null || !value.matches("minimal|low|medium|high|xhigh")) throw new IllegalArgumentException("Choose a valid reasoning effort");
+        return value;
     }
     private static String model(String value) {
         if (value == null || !value.matches("[A-Za-z0-9._:/+@-]{1,160}")) throw new IllegalArgumentException("Enter a valid model name");
