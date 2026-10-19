@@ -25,6 +25,8 @@ export interface ProviderCredentials extends CodexCredentialInput {
   endpoint?: string;
   model?: string;
   reasoning?: ReasoningLevel;
+  reasoningModel?: string;
+  reasoningLevels?: ReasoningLevel[];
   authMode?: string;
 }
 type ProviderModel = Model<'openai-responses'> | Model<'openai-codex-responses'> | Model<'openai-completions'>;
@@ -46,6 +48,25 @@ function selectedMode(config: ProviderConfig, credentials: ProviderCredentials):
 function isRelay(config: ProviderConfig, credentials: ProviderCredentials): boolean {
   return ['codex', 'codexRelay', 'codex-relay'].includes(selectedMode(config, credentials));
 }
+function advertisedReasoning(credentials: ProviderCredentials, id: string): ReasoningLevel[] | undefined {
+  if (credentials.reasoningModel !== id || !Array.isArray(credentials.reasoningLevels)) return undefined;
+  const levels = credentials.reasoningLevels.filter((value,index,all)=>
+    (REASONING_LEVELS as readonly string[]).includes(value) && all.indexOf(value)===index);
+  return levels.length ? levels : undefined;
+}
+function thinkingMap(levels: ReasoningLevel[] | undefined): any {
+  if (!levels) return undefined;
+  const supported = new Set(levels);
+  return {
+    off:null,
+    minimal:supported.has('minimal')?'minimal':null,
+    low:supported.has('low')?'low':null,
+    medium:supported.has('medium')?'medium':null,
+    high:supported.has('high')?'high':null,
+    xhigh:supported.has('xhigh')?'xhigh':null,
+    max:null,
+  };
+}
 export function modelFor(config: ProviderConfig, credentials: ProviderCredentials = {}, override?: string): ProviderModel {
   if (config.mode === 'scripted') return SCRIPT_MODEL;
   const mode = selectedMode(config, credentials);
@@ -62,11 +83,13 @@ export function modelFor(config: ProviderConfig, credentials: ProviderCredential
   } else if (url.protocol !== 'https:') throw new Error('Direct API providers require HTTPS.');
   const id = override || credentials.model || config.model || (account ? 'gpt-6-luna' : mode === 'opencode' ? 'big-pickle' : mode === 'nebius' ? 'zai-org/GLM-5.3-Flash' : 'gpt-6-sol');
   if (!/^[a-zA-Z0-9._:/+@-]{1,160}$/.test(id)) throw new Error('Invalid model identifier.');
+  const levels=advertisedReasoning(credentials,id), levelMap=thinkingMap(levels);
   if (mode === 'opencode' || mode === 'nebius') {
     return {
       id, name: id, provider: mode, api: 'openai-completions',
       baseUrl: url.toString().replace(/\/$/, ''), input: providerInput(mode,id),
       reasoning: true, contextWindow: 128000, maxTokens: 4096,
+      ...(levelMap?{thinkingLevelMap:levelMap}:{}),
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       compat: { supportsDeveloperRole: false },
     };
@@ -75,6 +98,7 @@ export function modelFor(config: ProviderConfig, credentials: ProviderCredential
     id, name: id, provider: account ? 'openai-codex' : 'openai', api: account ? 'openai-codex-responses' : 'openai-responses',
     baseUrl: url.toString().replace(/\/$/, ''), input: ['text', 'image'],
     reasoning: true, contextWindow: 128000, maxTokens: 4096,
+    ...(levelMap?{thinkingLevelMap:levelMap}:{}),
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     // Pi emits strict:false for standard Responses. The Codex adapter emits
     // strict:null, which is explicitly patched to false below for optional fields.
@@ -218,6 +242,11 @@ export function makeStream(config: ProviderConfig, credentials: ProviderCredenti
       else if (!apiKey?.trim()) return failure(model,'Configure a provider credential before sending.');
       if (options?.signal?.aborted) return failure(model,'Request cancelled.',true);
       const reasoning=normalizeReasoning(credentials.reasoning ?? config.reasoning);
+      const supported=advertisedReasoning(credentials,model.id);
+      if (supported && !supported.includes(reasoning))
+        return failure(model,`Reasoning effort ${reasoning} is not supported by ${model.id}. Choose one of: ${supported.join(', ')}.`);
+      if (account && !supported && reasoning!=='low')
+        return failure(model,'Discover models before using a non-Low reasoning effort with Codex account auth.');
       const shared = {...options,apiKey,transport:'sse' as const,maxRetries:0,timeoutMs:120000,reasoning};
       const source = model.api === 'openai-codex-responses'
         ? codexStreamSimple(model,context,{
