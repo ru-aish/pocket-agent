@@ -69,6 +69,7 @@ export class PocketRuntime {
     if(this.credentials.authMode) this.config.mode=normalizeMode(this.credentials.authMode);
     if(this.credentials.endpoint) this.config.endpoint=this.credentials.endpoint;
     if(this.credentials.model) this.config.model=this.credentials.model;
+    if(this.credentials.reasoning) this.config.reasoning=this.credentials.reasoning;
     if(this.config.mode==='codex-account')delete this.config.endpoint;
     this.context={cwd:'.',model:modelFor(this.config,this.credentials),modelRegistry:{}};
     const savedInbox=Array.isArray(saved.inbox)?saved.inbox:[];
@@ -121,7 +122,7 @@ export class PocketRuntime {
     this.credentials=this.call('credentials.get',{})??{};
     this.credentialHistory.add(this.credentials);
     registerCodexCredentialUpdater(this.credentials,args=>this.call('credentials.updateCodex',args),()=>this.coalesce());
-    this.config={mode:normalizeMode(this.credentials.authMode??'scripted'),endpoint:this.credentials.endpoint,model:this.credentials.model};
+    this.config={mode:normalizeMode(this.credentials.authMode??'scripted'),endpoint:this.credentials.endpoint,model:this.credentials.model,reasoning:this.credentials.reasoning};
   }
   async refreshModels(force=false):Promise<CatalogModel[]> {
     if(!force && this.cachedModels && Date.now()-this.cachedModels.at<5*60_000)return this.cachedModels.models;
@@ -335,7 +336,7 @@ export class PocketRuntime {
         }
         const previous=this.config, previousAccount=this.credentials.accountId, previousApiKey=this.credentials.apiKey, previousRevision=this.credentials.providerRevision;
         this.reloadCredentials();
-        if(cmd.config)this.config={...this.config,...{mode:cmd.config.mode??this.config.mode,model:cmd.config.model??this.config.model,endpoint:cmd.config.endpoint??this.config.endpoint}};
+        if(cmd.config)this.config={...this.config,...{mode:cmd.config.mode??this.config.mode,model:cmd.config.model??this.config.model,endpoint:cmd.config.endpoint??this.config.endpoint,reasoning:cmd.config.reasoning??this.config.reasoning}};
         this.catalogEpoch++;
         this.cachedModels=undefined;
         this.context.modelRegistry={};
