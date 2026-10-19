@@ -30,6 +30,7 @@ export async function discoverProviderModels(
     headers['ChatGPT-Account-Id'] = auth!.accountId;
     // Match the current Codex backend catalog contract without pretending to be the Codex CLI.
     headers.Originator = 'pocket-agent';
+    headers['User-Agent'] = 'PocketAgent';
   }
   let response: Response;
   try {
