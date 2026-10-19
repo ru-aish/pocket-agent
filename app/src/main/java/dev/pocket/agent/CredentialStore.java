@@ -14,6 +14,7 @@ import javax.crypto.Cipher;
 import javax.crypto.KeyGenerator;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.GCMParameterSpec;
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 /** Allowlisted credentials encrypted with a non-exportable Android Keystore key. */
@@ -85,6 +86,16 @@ public final class CredentialStore {
                 allowed.put("apiKey", settings.optString("apiKey"));
                 allowed.put("model", model(settings.optString("model")));
             }
+            String selectedModel = allowed.getString("model");
+            JSONObject capabilitySource = selectedModel.equals(settings.optString("reasoningModel")) ? settings
+                    : selectedModel.equals(current.optString("reasoningModel")) ? current : null;
+            if (capabilitySource != null) {
+                JSONArray levels = reasoningLevels(capabilitySource.optJSONArray("reasoningLevels"));
+                if (levels.length() > 0) {
+                    allowed.put("reasoningModel", selectedModel);
+                    allowed.put("reasoningLevels", levels);
+                }
+            }
             allowed.put("providerRevision", providerRevision(current, allowed));
             write(allowed);
         }
@@ -102,6 +113,13 @@ public final class CredentialStore {
             if (!current.optString("accountId").equals(account.getString("accountId"))) throw new IllegalArgumentException("Refreshed account does not match the signed-in account");
             JSONObject allowed = new JSONObject().put("authMode", CODEX_ACCOUNT).put("model", model(current.optString("model", CODEX_MODEL)))
                     .put("reasoning", reasoning(current.optString("reasoning", DEFAULT_REASONING)));
+            if (allowed.getString("model").equals(current.optString("reasoningModel"))) {
+                JSONArray levels = reasoningLevels(current.optJSONArray("reasoningLevels"));
+                if (levels.length() > 0) {
+                    allowed.put("reasoningModel", allowed.getString("model"));
+                    allowed.put("reasoningLevels", levels);
+                }
+            }
             for (String field : new String[]{"accessToken", "refreshToken", "accountId", "expiresAt", "idToken"})
                 if (account.has(field)) allowed.put(field, account.get(field));
             String revision = current.optString("providerRevision");
@@ -113,7 +131,9 @@ public final class CredentialStore {
     public void signOutCodex() throws Exception {
         synchronized (LOCK) {
             JSONObject current = read();
-            if (CODEX_ACCOUNT.equals(current.optString("authMode"))) write(new JSONObject().put("authMode", "scripted").put("model", "scripted").put("reasoning", DEFAULT_REASONING).put("endpoint", "https://api.openai.com/v1").put("providerRevision", UUID.randomUUID().toString()));
+            if (CODEX_ACCOUNT.equals(current.optString("authMode"))) write(new JSONObject().put("authMode", "scripted").put("model", "scripted")
+                    .put("reasoning", reasoning(current.optString("reasoning", DEFAULT_REASONING)))
+                    .put("endpoint", "https://api.openai.com/v1").put("providerRevision", UUID.randomUUID().toString()));
         }
     }
     private static String canonicalMode(String mode) {
@@ -139,6 +159,18 @@ public final class CredentialStore {
     private static String reasoning(String value) {
         if (value == null || !value.matches("minimal|low|medium|high|xhigh")) throw new IllegalArgumentException("Choose a valid reasoning effort");
         return value;
+    }
+    private static JSONArray reasoningLevels(JSONArray source) {
+        JSONArray result = new JSONArray();
+        if (source == null) return result;
+        for (int i = 0; i < source.length() && result.length() < 5; i++) {
+            String value = source.optString(i);
+            if (!value.matches("minimal|low|medium|high|xhigh")) continue;
+            boolean duplicate = false;
+            for (int j = 0; j < result.length(); j++) if (value.equals(result.optString(j))) { duplicate = true; break; }
+            if (!duplicate) result.put(value);
+        }
+        return result;
     }
     private static String model(String value) {
         if (value == null || !value.matches("[A-Za-z0-9._:/+@-]{1,160}")) throw new IllegalArgumentException("Enter a valid model name");
