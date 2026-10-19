@@ -87,8 +87,9 @@ public final class CredentialStore {
                 allowed.put("model", model(settings.optString("model")));
             }
             String selectedModel = allowed.getString("model");
-            JSONObject capabilitySource = selectedModel.equals(settings.optString("reasoningModel")) ? settings
-                    : selectedModel.equals(current.optString("reasoningModel")) ? current : null;
+            boolean sameIdentity = sameProviderIdentity(current, allowed);
+            JSONObject capabilitySource = sameIdentity && selectedModel.equals(settings.optString("reasoningModel")) ? settings
+                    : sameIdentity && selectedModel.equals(current.optString("reasoningModel")) ? current : null;
             if (capabilitySource != null) {
                 JSONArray levels = reasoningLevels(capabilitySource.optJSONArray("reasoningLevels"));
                 if (levels.length() > 0) {
