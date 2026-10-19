@@ -607,9 +607,6 @@ public final class MainActivity extends Activity implements AgentService.Observe
                     if (capability != null && capability.optJSONArray("reasoningLevels") != null) {
                         config.put("reasoningModel", selectedModel);
                         config.put("reasoningLevels", capability.getJSONArray("reasoningLevels"));
-                    } else if (selectedModel.equals(saved.optString("reasoningModel")) && saved.optJSONArray("reasoningLevels") != null) {
-                        config.put("reasoningModel", selectedModel);
-                        config.put("reasoningLevels", saved.getJSONArray("reasoningLevels"));
                     }
                     if (!selectedMode.equals(CredentialStore.CODEX_ACCOUNT)) {
                         config.put("endpoint", endpoint.getText().toString().trim());
