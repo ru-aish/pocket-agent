@@ -672,7 +672,8 @@ public final class MainActivity extends Activity implements AgentService.Observe
     }
     private void saveAccount(JSONObject account) throws Exception {
         if (activeWork()) throw new IllegalStateException("Stop active work before changing accounts");
-        JSONObject config = new JSONObject(account.toString()).put("authMode", CredentialStore.CODEX_ACCOUNT).put("model", CredentialStore.CODEX_MODEL);
+        JSONObject config = new JSONObject(account.toString()).put("authMode", CredentialStore.CODEX_ACCOUNT)
+                .put("model", CredentialStore.CODEX_MODEL).put("reasoning", CredentialStore.DEFAULT_REASONING);
         new CredentialStore(this).save(config);
         if (AgentService.isRunning()) command(json("action", "configure"));
     }
