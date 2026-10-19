@@ -2,7 +2,8 @@ import { modelFor, type ProviderConfig, type ProviderCredentials } from './provi
 import { ensureCodexCredentials } from './codex-auth.js';
 
 export interface CatalogModel { id: string; name: string }
-const CODEX_MODELS_URL = 'https://chatgpt.com/backend-api/codex/models?client_version=0.130.0';
+const CODEX_MODELS_URL = 'https://chatgpt.com/backend-api/codex/models';
+export const CODEX_MODELS_CLIENT_VERSION = '0.155.0';
 export const OPENCODE_MODELS_URL = 'https://opencode.ai/inference/v1/models';
 const MAX_CATALOG_BYTES = 512 * 1024;
 const MODEL_ID = /^[A-Za-z0-9._:/+@-]{1,160}$/;
@@ -21,11 +22,15 @@ export async function discoverProviderModels(
   const auth = account ? await ensureCodexCredentials(credentials) : null;
   const token = account ? auth!.accessToken : credentials.apiKey;
   if (mode !== 'opencode' && !token?.trim()) throw new Error('Save a provider credential before discovering models.');
-  const url = account ? CODEX_MODELS_URL : mode === 'opencode' ? OPENCODE_MODELS_URL : current.baseUrl.replace(/\/$/, '') + '/models';
+  const url = account ? CODEX_MODELS_URL + '?client_version=' + encodeURIComponent(CODEX_MODELS_CLIENT_VERSION) : mode === 'opencode' ? OPENCODE_MODELS_URL : current.baseUrl.replace(/\/$/, '') + '/models';
   const headers: Record<string,string> = {Accept: 'application/json'};
   // OpenCode's catalog is public; never send a Console service-account key to that separate public origin.
   if (mode !== 'opencode' && token?.trim()) headers.Authorization = 'Bearer ' + token;
-  if (account) headers['ChatGPT-Account-Id'] = auth!.accountId;
+  if (account) {
+    headers['ChatGPT-Account-Id'] = auth!.accountId;
+    // Match the current Codex backend catalog contract without pretending to be the Codex CLI.
+    headers.Originator = 'pocket-agent';
+  }
   let response: Response;
   try {
     response = await fetcher(url, {method:'GET', headers, redirect:'error', signal:AbortSignal.timeout(15000)});
