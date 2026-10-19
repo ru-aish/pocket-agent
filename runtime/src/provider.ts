@@ -9,14 +9,22 @@ import { SCRIPT_MODEL, scriptedStream } from './scripted.js';
 import {CODEX_RESPONSES_URL,ensureCodexCredentials,redactProviderSecrets,type CodexCredentialInput} from './codex-auth.js';
 export {registerCodexCredentialUpdater,redactProviderSecrets} from './codex-auth.js';
 
+export const REASONING_LEVELS = ['minimal','low','medium','high','xhigh'] as const;
+export type ReasoningLevel = typeof REASONING_LEVELS[number];
+export function normalizeReasoning(value: unknown): ReasoningLevel {
+  return typeof value === 'string' && (REASONING_LEVELS as readonly string[]).includes(value)
+    ? value as ReasoningLevel : 'low';
+}
 export interface ProviderConfig {
   mode?: 'scripted' | 'openai' | 'codex' | 'codex-account' | 'opencode' | 'nebius';
   endpoint?: string;
   model?: string;
+  reasoning?: ReasoningLevel;
 }
 export interface ProviderCredentials extends CodexCredentialInput {
   endpoint?: string;
   model?: string;
+  reasoning?: ReasoningLevel;
   authMode?: string;
 }
 type ProviderModel = Model<'openai-responses'> | Model<'openai-codex-responses'> | Model<'openai-completions'>;
@@ -209,7 +217,8 @@ export function makeStream(config: ProviderConfig, credentials: ProviderCredenti
       else if (mode === 'nebius' && !apiKey?.trim()) return failure(model,'Configure a Nebius API key before sending.');
       else if (!apiKey?.trim()) return failure(model,'Configure a provider credential before sending.');
       if (options?.signal?.aborted) return failure(model,'Request cancelled.',true);
-      const shared = {...options,apiKey,transport:'sse' as const,maxRetries:0,timeoutMs:120000,reasoning:'low' as const};
+      const reasoning=normalizeReasoning(credentials.reasoning ?? config.reasoning);
+      const shared = {...options,apiKey,transport:'sse' as const,maxRetries:0,timeoutMs:120000,reasoning};
       const source = model.api === 'openai-codex-responses'
         ? codexStreamSimple(model,context,{
             ...shared,fetch:fixedCodexFetch(options?.fetch ?? globalThis.fetch,options?.signal),
