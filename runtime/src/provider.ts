@@ -244,7 +244,10 @@ export function makeStream(config: ProviderConfig, credentials: ProviderCredenti
       else if (mode === 'nebius' && !apiKey?.trim()) return failure(model,'Configure a Nebius API key before sending.');
       else if (!apiKey?.trim()) return failure(model,'Configure a provider credential before sending.');
       if (options?.signal?.aborted) return failure(model,'Request cancelled.',true);
-      const reasoning=owner==='main' ? normalizeReasoning(credentials.reasoning ?? config.reasoning) : 'low';
+      const rawReasoning=credentials.reasoning ?? config.reasoning;
+      if(owner==='main' && rawReasoning!==undefined && !(REASONING_LEVELS as readonly string[]).includes(rawReasoning as string))
+        return failure(model,'Invalid reasoning effort configured.');
+      const reasoning=owner==='main' ? normalizeReasoning(rawReasoning) : 'low';
       const supported=advertisedReasoning(credentials,model.id);
       if (supported && !supported.includes(reasoning))
         return failure(model,`Reasoning effort ${reasoning} is not supported by ${model.id}. Choose one of: ${supported.join(', ')}.`);
