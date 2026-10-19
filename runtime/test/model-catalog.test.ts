@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {discoverProviderModels} from '../src/model-catalog.js';
+import {CODEX_MODELS_CLIENT_VERSION,discoverProviderModels} from '../src/model-catalog.js';
 import {modelFor} from '../src/provider.js';
 import {resolveModel} from '../vendor/pi9/execute.js';
 
@@ -57,10 +57,11 @@ function accountCredentials() {
 test('Codex account discovery uses fixed origin, account-scoped authorization and advertised slugs',async()=>{
  const auth=accountCredentials();
  const models=await discoverProviderModels({mode:'codex-account',model:'main-large'},auth,async(input,init)=>{
-   assert.match(String(input),/^https:\/\/chatgpt\.com\/backend-api\/codex\/models\?/);
+   assert.equal(String(input),'https://chatgpt.com/backend-api/codex/models?client_version='+CODEX_MODELS_CLIENT_VERSION);
    const h=new Headers(init?.headers);
    assert.equal(h.get('authorization'),'Bearer '+auth.accessToken);
    assert.equal(h.get('chatgpt-account-id'),auth.accountId);
+   assert.equal(h.get('originator'),'pocket-agent');
    assert.equal(init?.redirect,'error');
    return json({models:[{slug:'codex-strong',display_name:'Strong'},{slug:'codex-fast',display_name:'Fast'},{slug:'unavailable',supported_in_api:false}]});
  });
