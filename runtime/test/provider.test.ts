@@ -62,7 +62,7 @@ test('direct Codex wire has fixed destination, explicit strict:false and a struc
    calls++;assert.equal(String(input),CODEX_RESPONSES_URL);assert.equal(init?.redirect,'error');assert.ok(init?.signal);
    const headers=new Headers(init?.headers);assert.equal(headers.get('authorization'),'Bearer '+credentials.accessToken);assert.equal(headers.get('chatgpt-account-id'),credentials.accountId);
    const body=requestBody(init);wires.push(body);
-   assert.equal(body.model,'gpt-6-luna');assert.equal(body.stream,true);assert.equal(body.store,false);
+   assert.equal(body.model,'gpt-6-luna');assert.equal(body.stream,true);assert.equal(body.store,false);assert.equal(body.reasoning?.effort,'low');
    assert.equal(body.tools[0].strict,false);assert.deepEqual(body.tools[0].parameters.required,['action']);
    if(calls===1)return codexResponse([{type:'function_call',id:'fc_contract',call_id:'call_contract',name:'subagent',arguments:'{"action":"agents"}',status:'completed'}]);
    assert.ok(body.input.some((item:any)=>item.type==='function_call_output'&&item.call_id==='call_contract'&&item.output.includes('synthetic-ready')));
@@ -74,6 +74,16 @@ test('direct Codex wire has fixed destination, explicit strict:false and a struc
  await agent.prompt('Read the available agents and report ready.');
  assert.ifError(wireError);assert.equal(calls,2,'final '+agent.state.messages.at(-1)?.stopReason);assert.equal(executions,1);assert.equal(agent.state.messages.at(-1)?.stopReason,'stop');
  assert.equal(agent.state.messages.at(-1)?.content[0].type,'text');
+});
+
+test('direct Codex uses the selected reasoning effort',async()=>{
+ const credentials=accountCredential(),config={...accountConfig,reasoning:'high' as const};let wire:any;
+ const stream=makeStream(config,credentials,'main');
+ const result=await(await stream(modelFor(config,credentials),{messages:[]},{fetch:async(_input,init)=>{
+   wire=requestBody(init);return codexResponse([]);
+ }})).result();
+ assert.equal(result.stopReason,'stop');
+ assert.equal(wire.reasoning?.effort,'high');
 });
 
 test('direct Codex rejects every configured endpoint override',()=>{
