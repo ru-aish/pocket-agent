@@ -89,15 +89,22 @@ public final class CredentialStore {
             String selectedModel = allowed.getString("model");
             boolean sameIdentity = sameProviderIdentity(current, allowed);
             String nextProviderRevision = providerRevision(current, allowed);
+            boolean currentCapabilitiesFresh = current.optString("providerRevision").equals(current.optString("reasoningProviderRevision"));
             JSONObject capabilitySource = sameIdentity && selectedModel.equals(settings.optString("reasoningModel")) ? settings
-                    : sameIdentity && selectedModel.equals(current.optString("reasoningModel")) ? current : null;
-            if (capabilitySource != null) {
-                JSONArray levels = reasoningLevels(capabilitySource.optJSONArray("reasoningLevels"));
-                if (levels.length() > 0) {
-                    allowed.put("reasoningModel", selectedModel);
-                    allowed.put("reasoningLevels", levels);
-                    allowed.put("reasoningProviderRevision", nextProviderRevision);
-                }
+                    : sameIdentity && currentCapabilitiesFresh && selectedModel.equals(current.optString("reasoningModel")) ? current : null;
+            JSONArray selectedLevels = capabilitySource == null ? new JSONArray() : reasoningLevels(capabilitySource.optJSONArray("reasoningLevels"));
+            String selectedReasoning = allowed.getString("reasoning");
+            if (selectedLevels.length() > 0) {
+                if (!containsReasoning(selectedLevels, selectedReasoning))
+                    throw new IllegalArgumentException("Selected reasoning effort is not supported by this model");
+                allowed.put("reasoningModel", selectedModel);
+                allowed.put("reasoningLevels", selectedLevels);
+                allowed.put("reasoningProviderRevision", nextProviderRevision);
+            } else if (!"scripted".equals(canonicalMode(mode))) {
+                if ("xhigh".equals(selectedReasoning))
+                    throw new IllegalArgumentException("Extra high reasoning requires discovered model support");
+                if (CODEX_ACCOUNT.equals(mode) && !DEFAULT_REASONING.equals(selectedReasoning))
+                    throw new IllegalArgumentException("Discover models before using a non-Low reasoning effort with Codex account");
             }
             allowed.put("providerRevision", nextProviderRevision);
             write(allowed);
@@ -176,6 +183,10 @@ public final class CredentialStore {
             if (!duplicate) result.put(value);
         }
         return result;
+    }
+    private static boolean containsReasoning(JSONArray levels, String value) {
+        for (int i = 0; i < levels.length(); i++) if (value.equals(levels.optString(i))) return true;
+        return false;
     }
     private static String model(String value) {
         if (value == null || !value.matches("[A-Za-z0-9._:/+@-]{1,160}")) throw new IllegalArgumentException("Enter a valid model name");
