@@ -218,6 +218,7 @@ public final class MainActivity extends Activity implements AgentService.Observe
             if (provider != null) {
                 safeProvider.put("mode", provider.optString("mode"));
                 safeProvider.put("model", provider.optString("model"));
+                safeProvider.put("reasoning", provider.optString("reasoning", CredentialStore.DEFAULT_REASONING));
             }
             JSONObject debug = new JSONObject();
             debug.put("provider", safeProvider);
@@ -288,6 +289,15 @@ public final class MainActivity extends Activity implements AgentService.Observe
             @Override public void onNothingSelected(AdapterView<?> parent) { }
         });
         panel.addView(picker);
+        panel.addView(text("Reasoning effort"));
+        String[] reasoningNames = {"Minimal", "Low", "Medium", "High", "Extra high"};
+        String[] reasoningIds = {"minimal", "low", "medium", "high", "xhigh"};
+        Spinner reasoning = new Spinner(this);
+        reasoning.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, reasoningNames));
+        String savedReasoning = saved.optString("reasoning", CredentialStore.DEFAULT_REASONING);
+        int savedReasoningIndex = java.util.Arrays.asList(reasoningIds).indexOf(savedReasoning);
+        reasoning.setSelection(savedReasoningIndex >= 0 ? savedReasoningIndex : 1);
+        panel.addView(reasoning);
         final EditText[] newKey = new EditText[1];
         panel.addView(button("Discover models", () -> {
             if (activeWork()) { toast("Finish active work before discovering models"); return; }
@@ -350,16 +360,21 @@ public final class MainActivity extends Activity implements AgentService.Observe
             endpointPanel.setVisibility(account || fixedProvider ? View.GONE : View.VISIBLE);
             secretPanel.setVisibility(account ? View.GONE : View.VISIBLE);
             accountPanel.setVisibility(account ? View.VISIBLE : View.GONE);
+            reasoning.setEnabled(!selectedMode.equals("scripted"));
             secret.setHint(openCode ? "OpenCode Console service-account key (required)" : nebius ? "Nebius API key (required)" : "API key / relay token (blank keeps saved value)");
             if (sameProvider) {
                 if (!account) endpoint.setText(saved.optString("endpoint", endpoint.getText().toString()));
                 model.setText(saved.optString("model", model.getText().toString()));
-            } else if (account) model.setText(CredentialStore.CODEX_MODEL);
-            else if (openCode) { endpoint.setText(CredentialStore.OPENCODE_ENDPOINT); model.setText(CredentialStore.OPENCODE_MODEL); }
-            else if (nebius) { endpoint.setText(CredentialStore.NEBIUS_ENDPOINT); model.setText(CredentialStore.NEBIUS_MODEL); }
-            else if (selectedMode.equals("codex")) { endpoint.setText("http://10.0.2.2:8787/v1"); model.setText(CredentialStore.CODEX_MODEL); }
-            else if (selectedMode.equals("openai")) { endpoint.setText("https://api.openai.com/v1"); model.setText("gpt-4.1-mini"); }
-            else { endpoint.setText("https://api.openai.com/v1"); model.setText("scripted"); }
+                reasoning.setSelection(savedReasoningIndex >= 0 ? savedReasoningIndex : 1);
+            } else {
+                reasoning.setSelection(1);
+                if (account) model.setText(CredentialStore.CODEX_MODEL);
+                else if (openCode) { endpoint.setText(CredentialStore.OPENCODE_ENDPOINT); model.setText(CredentialStore.OPENCODE_MODEL); }
+                else if (nebius) { endpoint.setText(CredentialStore.NEBIUS_ENDPOINT); model.setText(CredentialStore.NEBIUS_MODEL); }
+                else if (selectedMode.equals("codex")) { endpoint.setText("http://10.0.2.2:8787/v1"); model.setText(CredentialStore.CODEX_MODEL); }
+                else if (selectedMode.equals("openai")) { endpoint.setText("https://api.openai.com/v1"); model.setText("gpt-4.1-mini"); }
+                else { endpoint.setText("https://api.openai.com/v1"); model.setText("scripted"); }
+            }
         };
         final int[] lastProvider = {selected};
         mode.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
@@ -544,7 +559,8 @@ public final class MainActivity extends Activity implements AgentService.Observe
                 try {
                     if (activeWork()) { toast("Stop active work before changing connections"); return; }
                     String selectedMode = modes[mode.getSelectedItemPosition()];
-                    JSONObject config = json("authMode", selectedMode, "model", model.getText().toString().trim());
+                    JSONObject config = json("authMode", selectedMode, "model", model.getText().toString().trim(),
+                            "reasoning", reasoningIds[reasoning.getSelectedItemPosition()]);
                     if (!selectedMode.equals(CredentialStore.CODEX_ACCOUNT)) {
                         config.put("endpoint", endpoint.getText().toString().trim());
                         String savedMode = saved.optString("authMode");
