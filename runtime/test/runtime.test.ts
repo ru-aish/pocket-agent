@@ -332,6 +332,16 @@ test('paused main with retained inbox can still apply provider and prompt settin
  assert.equal(runtime.state().mainPaused,true);assert.equal(internal.inbox.length,1,'settings must not discard paused queued work');
 });
 
+test('provider reasoning follows protected settings across runtime reloads',()=>{
+ const bridge=new Bridge();
+ bridge.credentials={authMode:'openai',endpoint:'https://example.test/v1',model:'gpt-6-luna',apiKey:'synthetic-key',reasoning:'high'};
+ const runtime=new PocketRuntime(bridge);
+ assert.equal(runtime.state().provider.reasoning,'high');
+ bridge.credentials={...bridge.credentials,reasoning:'xhigh'};
+ command(runtime,{action:'configure'});
+ assert.equal(runtime.state().provider.reasoning,'xhigh');
+});
+
 test('new main thread clears old main delivery but retains a resumable worker',async()=>{
  const bridge=new Bridge(),runtime=new PocketRuntime(bridge),internal=runtime as any;
  command(runtime,{action:'send',text:'delegate fixture delay=80'});
