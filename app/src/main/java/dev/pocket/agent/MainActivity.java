@@ -46,13 +46,13 @@ public final class MainActivity extends Activity implements AgentService.Observe
     private JSONObject state = new JSONObject();
     private String viewedWorker;
     private String deferredUserMessage;
-    private Spinner modelPicker, reasoningPicker;
+    private Spinner modelPicker;
     private String modelRequestId;
     private String[] modelIds = {};
-    private JSONArray discoveredModels = new JSONArray();
-    private String[] activeReasoningIds = REASONING_IDS.clone();
     private static final String[] REASONING_IDS = {"minimal", "low", "medium", "high", "xhigh"};
     private static final String[] REASONING_NAMES = {"Minimal", "Low", "Medium", "High", "Extra high"};
+    private JSONArray discoveredModels = new JSONArray();
+    private String[] activeReasoningIds = REASONING_IDS.clone();
     private StateStore store;
     private static final int IMPORT_CODEX = 90;
     private final ExecutorService accountFiles = Executors.newSingleThreadExecutor();
@@ -315,7 +315,7 @@ public final class MainActivity extends Activity implements AgentService.Observe
         EditText model = field(panel, "Main chat model ID (editable fallback)", saved.optString("model", defaultModel));
         TextView reasoningLabel = text("Reasoning effort");
         panel.addView(reasoningLabel);
-        Spinner reasoning = new Spinner(this); reasoningPicker = reasoning;
+        Spinner reasoning = new Spinner(this);
         String savedReasoning = saved.optString("reasoning", CredentialStore.DEFAULT_REASONING);
         JSONArray savedLevels = saved.optString("model").equals(saved.optString("reasoningModel")) ? saved.optJSONArray("reasoningLevels") : null;
         setReasoningOptions(reasoning, savedLevels, savedReasoning, CredentialStore.DEFAULT_REASONING);
@@ -637,7 +637,7 @@ public final class MainActivity extends Activity implements AgentService.Observe
         });
         dialog.setOnDismissListener(ignored -> {
             if (modelPicker == picker) {
-                modelPicker = null; reasoningPicker = null; modelRequestId = null; modelIds = new String[0];
+                modelPicker = null; modelRequestId = null; modelIds = new String[0];
                 discoveredModels = new JSONArray(); activeReasoningIds = REASONING_IDS.clone();
             }
         });
