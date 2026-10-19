@@ -6,6 +6,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.platform.app.InstrumentationRegistry;
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
+import org.json.JSONArray;
 import org.json.JSONObject;
 import org.junit.Assume;
 import org.junit.Test;
@@ -56,6 +57,23 @@ public class CodexAuthDeviceTest {
             credentials.signOutCodex();JSONObject out=credentials.get();assertEquals("scripted",out.optString("authMode"));
             for(String field:new String[]{"accessToken","refreshToken","accountId","expiresAt","idToken"})assertFalse("Sign-out retained an account field",out.has(field));
             System.out.println("CODEX_AUTH_RESULT="+new JSONObject().put("case","importEncryptAndSignOut").put("synthetic",true).put("imported",true).put("encryptedAtRest",true).put("signedOut",true));
+        } finally { credentials.save(saved); }
+    }
+    @Test public void saveRejectsReasoningUnsupportedByDiscoveredModel() throws Exception {
+        Assume.assumeTrue("Synthetic account tests require an emulator",CredentialStore.isEmulator());
+        CredentialStore credentials=new CredentialStore(context());JSONObject saved=credentials.get();
+        try {
+            JSONObject initial=account("synthetic-reasoning-refresh","reasoning").put("reasoning","low");
+            credentials.save(initial);
+            JSONObject invalid=new JSONObject(credentials.get().toString())
+                    .put("reasoning","xhigh")
+                    .put("reasoningModel","gpt-6-luna")
+                    .put("reasoningLevels",new JSONArray().put("low"));
+            boolean rejected=false;
+            try { credentials.save(invalid); }
+            catch(IllegalArgumentException expected) { rejected=true; }
+            assertTrue("Unsupported reasoning was persisted for the discovered model",rejected);
+            assertEquals("Rejected reasoning changed protected settings","low",credentials.get().optString("reasoning"));
         } finally { credentials.save(saved); }
     }
     @Test public void rotationCompareAndSaveRejectsStaleAndSignedOut() throws Exception {
