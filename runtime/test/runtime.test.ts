@@ -340,6 +340,8 @@ test('provider reasoning follows protected settings across runtime reloads',()=>
  bridge.credentials={...bridge.credentials,reasoning:'xhigh'};
  command(runtime,{action:'configure'});
  assert.equal(runtime.state().provider.reasoning,'xhigh');
+ const restored=new PocketRuntime(bridge);
+ assert.equal(restored.state().provider.reasoning,'xhigh');
 });
 
 test('new main thread clears old main delivery but retains a resumable worker',async()=>{
