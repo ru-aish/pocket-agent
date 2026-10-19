@@ -86,6 +86,16 @@ test('direct Codex uses the selected reasoning effort',async()=>{
  assert.equal(wire.reasoning?.effort,'high');
 });
 
+test('worker sessions keep the existing low reasoning default',async()=>{
+ const credentials={...accountCredential(),reasoning:'high' as const,reasoningModel:'gpt-6-luna',reasoningLevels:['low','medium','high','xhigh'] as any};
+ const config={...accountConfig,reasoning:'high' as const};let wire:any;
+ const result=await(await makeStream(config,credentials,'phone-operator')(modelFor(config,credentials),{messages:[]},{fetch:async(_input,init)=>{
+   wire=requestBody(init);return codexResponse([]);
+ }})).result();
+ assert.equal(result.stopReason,'stop');
+ assert.equal(wire.reasoning?.effort,'low');
+});
+
 test('direct Codex rejects unsupported advertised reasoning instead of silently clamping',async()=>{
  const credentials={...accountCredential(),reasoningModel:'gpt-6-luna',reasoningLevels:['low','medium'] as any};
  const config={...accountConfig,reasoning:'xhigh' as const};let calls=0;
