@@ -46,9 +46,13 @@ public final class MainActivity extends Activity implements AgentService.Observe
     private JSONObject state = new JSONObject();
     private String viewedWorker;
     private String deferredUserMessage;
-    private Spinner modelPicker;
+    private Spinner modelPicker, reasoningPicker;
     private String modelRequestId;
     private String[] modelIds = {};
+    private JSONArray discoveredModels = new JSONArray();
+    private String[] activeReasoningIds = REASONING_IDS.clone();
+    private static final String[] REASONING_IDS = {"minimal", "low", "medium", "high", "xhigh"};
+    private static final String[] REASONING_NAMES = {"Minimal", "Low", "Medium", "High", "Extra high"};
     private StateStore store;
     private static final int IMPORT_CODEX = 90;
     private final ExecutorService accountFiles = Executors.newSingleThreadExecutor();
@@ -134,6 +138,7 @@ public final class MainActivity extends Activity implements AgentService.Observe
             if (!failure.isEmpty()) { toast(failure); return; }
             JSONArray models = event.optJSONArray("models");
             if (models == null) { toast("Provider returned no model list"); return; }
+            discoveredModels = models;
             String[] labels = new String[models.length() + 1];
             modelIds = new String[models.length() + 1];
             labels[0] = "Select discovered main model";
@@ -252,6 +257,36 @@ public final class MainActivity extends Activity implements AgentService.Observe
         startForegroundService(service);
     }
     private boolean activeWork() { return AgentService.isRunning() && (state.optBoolean("busy") || state.optBoolean("active")); }
+    private static String reasoningName(String id) {
+        for (int i = 0; i < REASONING_IDS.length; i++) if (REASONING_IDS[i].equals(id)) return REASONING_NAMES[i];
+        return id;
+    }
+    private String currentReasoning(Spinner spinner) {
+        int position = spinner == null ? -1 : spinner.getSelectedItemPosition();
+        return position >= 0 && position < activeReasoningIds.length ? activeReasoningIds[position] : CredentialStore.DEFAULT_REASONING;
+    }
+    private void setReasoningOptions(Spinner spinner, JSONArray advertised, String preferred, String fallback) {
+        java.util.ArrayList<String> ids = new java.util.ArrayList<>(), labels = new java.util.ArrayList<>();
+        for (int i = 0; i < REASONING_IDS.length; i++) {
+            String candidate = REASONING_IDS[i];
+            boolean allowed = advertised == null || advertised.length() == 0;
+            if (!allowed) for (int j = 0; j < advertised.length(); j++) if (candidate.equals(advertised.optString(j))) { allowed = true; break; }
+            if (allowed) { ids.add(candidate); labels.add(reasoningName(candidate)); }
+        }
+        if (ids.isEmpty()) { ids.add(CredentialStore.DEFAULT_REASONING); labels.add(reasoningName(CredentialStore.DEFAULT_REASONING)); }
+        activeReasoningIds = ids.toArray(new String[0]);
+        spinner.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, labels));
+        int selected = ids.indexOf(preferred);
+        if (selected < 0) selected = ids.indexOf(fallback);
+        spinner.setSelection(selected >= 0 ? selected : 0);
+    }
+    private JSONObject discoveredModel(String id) {
+        for (int i = 0; i < discoveredModels.length(); i++) {
+            JSONObject entry = discoveredModels.optJSONObject(i);
+            if (entry != null && id.equals(entry.optString("id"))) return entry;
+        }
+        return null;
+    }
     private void settings() {
         CredentialStore credentials = new CredentialStore(this); final JSONObject saved;
         try { saved = credentials.get(); } catch (Exception e) { toast("Unable to read protected credentials"); return; }
@@ -278,26 +313,29 @@ public final class MainActivity extends Activity implements AgentService.Observe
         EditText endpoint = field(endpointPanel, "API endpoint", saved.optString("endpoint", defaultEndpoint)); endpoint.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
         String defaultModel = selected == 2 ? CredentialStore.OPENCODE_MODEL : selected == 3 ? CredentialStore.NEBIUS_MODEL : selected == 5 ? CredentialStore.CODEX_MODEL : "gpt-4.1-mini";
         EditText model = field(panel, "Main chat model ID (editable fallback)", saved.optString("model", defaultModel));
+        TextView reasoningLabel = text("Reasoning effort");
+        panel.addView(reasoningLabel);
+        Spinner reasoning = new Spinner(this); reasoningPicker = reasoning;
+        String savedReasoning = saved.optString("reasoning", CredentialStore.DEFAULT_REASONING);
+        JSONArray savedLevels = saved.optString("model").equals(saved.optString("reasoningModel")) ? saved.optJSONArray("reasoningLevels") : null;
+        setReasoningOptions(reasoning, savedLevels, savedReasoning, CredentialStore.DEFAULT_REASONING);
+        panel.addView(reasoning);
         Spinner picker = new Spinner(this);
         modelPicker = picker;
         picker.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, new String[]{"Tap Discover models to choose"}));
         picker.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
             @Override public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
-                if (position > 0 && position < modelIds.length && modelIds[position] != null)
+                if (position > 0 && position < modelIds.length && modelIds[position] != null) {
+                    String preferred = currentReasoning(reasoning);
                     model.setText(modelIds[position]);
+                    JSONObject entry = discoveredModels.optJSONObject(position - 1);
+                    setReasoningOptions(reasoning, entry == null ? null : entry.optJSONArray("reasoningLevels"), preferred,
+                            entry == null ? CredentialStore.DEFAULT_REASONING : entry.optString("defaultReasoning", CredentialStore.DEFAULT_REASONING));
+                }
             }
             @Override public void onNothingSelected(AdapterView<?> parent) { }
         });
         panel.addView(picker);
-        panel.addView(text("Reasoning effort"));
-        String[] reasoningNames = {"Minimal", "Low", "Medium", "High", "Extra high"};
-        String[] reasoningIds = {"minimal", "low", "medium", "high", "xhigh"};
-        Spinner reasoning = new Spinner(this);
-        reasoning.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, reasoningNames));
-        String savedReasoning = saved.optString("reasoning", CredentialStore.DEFAULT_REASONING);
-        int savedReasoningIndex = java.util.Arrays.asList(reasoningIds).indexOf(savedReasoning);
-        reasoning.setSelection(savedReasoningIndex >= 0 ? savedReasoningIndex : 1);
-        panel.addView(reasoning);
         final EditText[] newKey = new EditText[1];
         panel.addView(button("Discover models", () -> {
             if (activeWork()) { toast("Finish active work before discovering models"); return; }
@@ -360,14 +398,16 @@ public final class MainActivity extends Activity implements AgentService.Observe
             endpointPanel.setVisibility(account || fixedProvider ? View.GONE : View.VISIBLE);
             secretPanel.setVisibility(account ? View.GONE : View.VISIBLE);
             accountPanel.setVisibility(account ? View.VISIBLE : View.GONE);
-            reasoning.setEnabled(!selectedMode.equals("scripted"));
+            reasoningLabel.setVisibility(selectedMode.equals("scripted") ? View.GONE : View.VISIBLE);
+            reasoning.setVisibility(selectedMode.equals("scripted") ? View.GONE : View.VISIBLE);
             secret.setHint(openCode ? "OpenCode Console service-account key (required)" : nebius ? "Nebius API key (required)" : "API key / relay token (blank keeps saved value)");
             if (sameProvider) {
                 if (!account) endpoint.setText(saved.optString("endpoint", endpoint.getText().toString()));
                 model.setText(saved.optString("model", model.getText().toString()));
-                reasoning.setSelection(savedReasoningIndex >= 0 ? savedReasoningIndex : 1);
+                JSONArray levels = saved.optString("model").equals(saved.optString("reasoningModel")) ? saved.optJSONArray("reasoningLevels") : null;
+                setReasoningOptions(reasoning, levels, currentReasoning(reasoning), savedReasoning);
             } else {
-                reasoning.setSelection(1);
+                setReasoningOptions(reasoning, null, currentReasoning(reasoning), savedReasoning);
                 if (account) model.setText(CredentialStore.CODEX_MODEL);
                 else if (openCode) { endpoint.setText(CredentialStore.OPENCODE_ENDPOINT); model.setText(CredentialStore.OPENCODE_MODEL); }
                 else if (nebius) { endpoint.setText(CredentialStore.NEBIUS_ENDPOINT); model.setText(CredentialStore.NEBIUS_MODEL); }
@@ -383,6 +423,7 @@ public final class MainActivity extends Activity implements AgentService.Observe
                     secret.setText("");
                     modelRequestId = null;
                     modelIds = new String[0];
+                    discoveredModels = new JSONArray();
                     picker.setAdapter(new ArrayAdapter<>(MainActivity.this, android.R.layout.simple_spinner_dropdown_item,
                             new String[]{"Tap Discover models to choose"}));
                     picker.setSelection(0);
@@ -559,8 +600,17 @@ public final class MainActivity extends Activity implements AgentService.Observe
                 try {
                     if (activeWork()) { toast("Stop active work before changing connections"); return; }
                     String selectedMode = modes[mode.getSelectedItemPosition()];
-                    JSONObject config = json("authMode", selectedMode, "model", model.getText().toString().trim(),
-                            "reasoning", reasoningIds[reasoning.getSelectedItemPosition()]);
+                    String selectedModel = model.getText().toString().trim();
+                    JSONObject config = json("authMode", selectedMode, "model", selectedModel,
+                            "reasoning", currentReasoning(reasoning));
+                    JSONObject capability = discoveredModel(selectedModel);
+                    if (capability != null && capability.optJSONArray("reasoningLevels") != null) {
+                        config.put("reasoningModel", selectedModel);
+                        config.put("reasoningLevels", capability.getJSONArray("reasoningLevels"));
+                    } else if (selectedModel.equals(saved.optString("reasoningModel")) && saved.optJSONArray("reasoningLevels") != null) {
+                        config.put("reasoningModel", selectedModel);
+                        config.put("reasoningLevels", saved.getJSONArray("reasoningLevels"));
+                    }
                     if (!selectedMode.equals(CredentialStore.CODEX_ACCOUNT)) {
                         config.put("endpoint", endpoint.getText().toString().trim());
                         String savedMode = saved.optString("authMode");
@@ -586,7 +636,10 @@ public final class MainActivity extends Activity implements AgentService.Observe
             });
         });
         dialog.setOnDismissListener(ignored -> {
-            if (modelPicker == picker) { modelPicker = null; modelRequestId = null; modelIds = new String[0]; }
+            if (modelPicker == picker) {
+                modelPicker = null; reasoningPicker = null; modelRequestId = null; modelIds = new String[0];
+                discoveredModels = new JSONArray(); activeReasoningIds = REASONING_IDS.clone();
+            }
         });
         dialog.show();
     }
