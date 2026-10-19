@@ -105,6 +105,15 @@ test('direct Codex rejects unsupported advertised reasoning instead of silently 
  assert.match(result.errorMessage??'',/not supported/);
 });
 
+test('invalid configured reasoning is rejected instead of defaulting to low',async()=>{
+ const config:any={mode:'openai',endpoint:'https://api.openai.com/v1',model:'gpt-6-sol',reasoning:'typo'};
+ let calls=0;
+ const result=await(await makeStream(config,{authMode:'openai',apiKey:'synthetic-key'},'main')(modelFor(config,{authMode:'openai',apiKey:'synthetic-key'}),{messages:[]},{fetch:async()=>{calls++;return codexResponse([]);}})).result();
+ assert.equal(calls,0);
+ assert.equal(result.stopReason,'error');
+ assert.match(result.errorMessage??'',/Invalid reasoning effort configured/);
+});
+
 test('stale reasoning capabilities from another provider revision are ignored',async()=>{
  const config={mode:'openai' as const,endpoint:'https://api.openai.com/v1',model:'gpt-6-sol',reasoning:'xhigh' as const};
  const credentials={authMode:'openai',apiKey:'synthetic-key',providerRevision:'new-provider',reasoningProviderRevision:'old-provider',
