@@ -1,7 +1,7 @@
-import { modelFor, type ProviderConfig, type ProviderCredentials } from './provider.js';
+import { modelFor, REASONING_LEVELS, type ProviderConfig, type ProviderCredentials, type ReasoningLevel } from './provider.js';
 import { ensureCodexCredentials } from './codex-auth.js';
 
-export interface CatalogModel { id: string; name: string }
+export interface CatalogModel { id: string; name: string; reasoningLevels?: ReasoningLevel[]; defaultReasoning?: ReasoningLevel }
 const CODEX_MODELS_URL = 'https://chatgpt.com/backend-api/codex/models';
 export const CODEX_MODELS_CLIENT_VERSION = '0.162.1';
 export const OPENCODE_MODELS_URL = 'https://opencode.ai/inference/v1/models';
@@ -76,7 +76,21 @@ export async function discoverProviderModels(
     if (mode === 'opencode' && ((id !== 'big-pickle' && !id.endsWith('-free')) || OPENCODE_NON_CHAT_FREE.has(id))) continue;
     seen.add(id);
     const display = entry.display_name ?? entry.name;
-    models.push({id, name: typeof display === 'string' && display.trim() && display.length <= 120 ? display : id});
+    const advertised = Array.isArray(entry.supported_reasoning_levels) ? entry.supported_reasoning_levels
+      : Array.isArray(entry.supported_reasoning_efforts) ? entry.supported_reasoning_efforts : [];
+    const reasoningLevels = advertised
+      .map((value:any)=>typeof value==='string'?value:value?.effort)
+      .filter((value:any,index:number,all:any[])=>typeof value==='string'
+        && (REASONING_LEVELS as readonly string[]).includes(value) && all.indexOf(value)===index) as ReasoningLevel[];
+    const rawDefault = entry.default_reasoning_level ?? entry.default_reasoning_effort;
+    const defaultReasoning = typeof rawDefault==='string'
+      && (REASONING_LEVELS as readonly string[]).includes(rawDefault) ? rawDefault as ReasoningLevel : undefined;
+    models.push({
+      id,
+      name: typeof display === 'string' && display.trim() && display.length <= 120 ? display : id,
+      ...(reasoningLevels.length?{reasoningLevels}:{}),
+      ...(defaultReasoning?{defaultReasoning}:{}),
+    });
     if (models.length >= 1024) break;
   }
   if (!models.length) throw new Error('Provider returned no usable model identifiers.');
