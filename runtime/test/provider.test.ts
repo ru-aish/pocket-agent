@@ -77,7 +77,7 @@ test('direct Codex wire has fixed destination, explicit strict:false and a struc
 });
 
 test('direct Codex uses the selected reasoning effort',async()=>{
- const credentials={...accountCredential(),reasoningModel:'gpt-6-luna',reasoningLevels:['low','medium','high','xhigh'] as any},config={...accountConfig,reasoning:'high' as const};let wire:any;
+ const credentials={...accountCredential(),providerRevision:'rev-1',reasoningProviderRevision:'rev-1',reasoningModel:'gpt-6-luna',reasoningLevels:['low','medium','high','xhigh'] as any},config={...accountConfig,reasoning:'high' as const};let wire:any;
  const stream=makeStream(config,credentials,'main');
  const result=await(await stream(modelFor(config,credentials),{messages:[]},{fetch:async(_input,init)=>{
    wire=requestBody(init);return codexResponse([]);
@@ -87,7 +87,7 @@ test('direct Codex uses the selected reasoning effort',async()=>{
 });
 
 test('worker sessions keep the existing low reasoning default',async()=>{
- const credentials={...accountCredential(),reasoning:'high' as const,reasoningModel:'gpt-6-luna',reasoningLevels:['low','medium','high','xhigh'] as any};
+ const credentials={...accountCredential(),reasoning:'high' as const,providerRevision:'rev-1',reasoningProviderRevision:'rev-1',reasoningModel:'gpt-6-luna',reasoningLevels:['low','medium','high','xhigh'] as any};
  const config={...accountConfig,reasoning:'high' as const};let wire:any;
  const result=await(await makeStream(config,credentials,'phone-operator')(modelFor(config,credentials),{messages:[]},{fetch:async(_input,init)=>{
    wire=requestBody(init);return codexResponse([]);
@@ -97,12 +97,23 @@ test('worker sessions keep the existing low reasoning default',async()=>{
 });
 
 test('direct Codex rejects unsupported advertised reasoning instead of silently clamping',async()=>{
- const credentials={...accountCredential(),reasoningModel:'gpt-6-luna',reasoningLevels:['low','medium'] as any};
+ const credentials={...accountCredential(),providerRevision:'rev-1',reasoningProviderRevision:'rev-1',reasoningModel:'gpt-6-luna',reasoningLevels:['low','medium'] as any};
  const config={...accountConfig,reasoning:'xhigh' as const};let calls=0;
  const result=await(await makeStream(config,credentials,'main')(modelFor(config,credentials),{messages:[]},{fetch:async()=>{calls++;return codexResponse([]);}})).result();
  assert.equal(calls,0);
  assert.equal(result.stopReason,'error');
  assert.match(result.errorMessage??'',/not supported/);
+});
+
+test('stale reasoning capabilities from another provider revision are ignored',async()=>{
+ const config={mode:'openai' as const,endpoint:'https://api.openai.com/v1',model:'gpt-6-sol',reasoning:'xhigh' as const};
+ const credentials={authMode:'openai',apiKey:'synthetic-key',providerRevision:'new-provider',reasoningProviderRevision:'old-provider',
+   reasoningModel:'gpt-6-sol',reasoningLevels:['low','medium','high','xhigh'] as any};
+ let calls=0;
+ const result=await(await makeStream(config,credentials,'main')(modelFor(config,credentials),{messages:[]},{fetch:async()=>{calls++;return codexResponse([]);}})).result();
+ assert.equal(calls,0);
+ assert.equal(result.stopReason,'error');
+ assert.match(result.errorMessage??'',/Extra high reasoning requires discovered model support/);
 });
 
 test('unknown extra-high support is rejected instead of being silently clamped',async()=>{
