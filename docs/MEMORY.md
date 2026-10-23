@@ -1,6 +1,6 @@
 # Personal memory (Android)
 
-Pocket Agent uses one app-private `personal-memory.db` store in the Android process. It does not run a local language model, vector daemon, or background service, and does not depend on hosted Supermemory, Honcho, or OpenClaw deployments.
+Pocket Agent keeps its app-private `personal-memory.db` store in the Android process. An optional Hindsight MCP memory bank adds semantic/temporal retrieval and completed-turn retention without replacing SQLite. Neither mode starts a local vector daemon or additional Android service.
 
 ## Design
 
@@ -12,11 +12,19 @@ Pocket Agent uses one app-private `personal-memory.db` store in the Android proc
 - **Provenance:** confirmed memories cannot be automatically overwritten by observer output. Returned source and timestamps are visible for retrieval and corrections. Explicit agent calls are distinguished from automatically inferred records; confidence is not the same as verified completion.
 - **Limits:** 5,000 records total, 800 characters each, FTS indexing on Android, 16 profile hits plus search, and 5.5 KB maximum injected recall. No additional SQLite extensions or native libraries.
 
+## Optional Hindsight integration
+
+1. Run or choose a trusted Hindsight service with HTTPS and a **single-bank** MCP URL such as `https://your-memory-host/mcp/pocket-agent/`. The multi-bank `/mcp/` endpoint is deliberately not used.
+2. On the phone, open **Settings → Remote MCP servers → Add remote MCP server**. Set the server name to exactly **Hindsight**, enter the bank-scoped URL, and configure bearer-token authentication if required. The Android app generates its own UUID server ID; the integration recognizes the name, not that ID.
+3. After reconnecting, new successful main conversations and worker-completion deliveries are retained via Hindsight's `retain` tool. Before every main/worker inference, `recall` contributes a bounded, explicitly untrusted context block alongside local SQLite results. No provider, UI, or new Android networking stack is required.
+
+Capture is opt-in through this named MCP server. New retained events contain the user request/worker terminal report plus the assistant's response (up to 8,000 characters per event), with source and timestamp. Known provider/MCP credential values are redacted, but **this is not a general sensitive-data detector**: do not enable an untrusted memory endpoint. Failed retains remain in a bounded 100-event durable checkpoint queue, retry on future successful connections/turns, and never transfer to a different bank URL. SQLite tools continue to work when Hindsight is offline. Past transcripts are **not automatically backfilled**.
+
 ## Security and limitations
 
-No secrets, medical data, private identifiers, political or other sensitive information should be automatically remembered. A model instruction alone is not a complete privacy filter, so a shipping-grade consent/delete-all UI and stricter sensitive-data validation remain necessary. Existing Android app-private filesystem protections apply; this memory file is not separately Keystore-encrypted. Memory data is treated as untrusted context, not fresh operational evidence or a standing authorization to send messages, mutate apps or share data.
+No secrets, medical data, private identifiers, political or other sensitive information should be automatically remembered. A model instruction alone is not a complete privacy filter, so a shipping-grade consent/delete-all UI and stricter sensitive-data validation remain necessary. Existing Android app-private filesystem protections apply; the SQLite file and pending Hindsight uploads are not separately Keystore-encrypted. Memory data is treated as untrusted context, not fresh operational evidence or a standing authorization to send messages, mutate apps or share data. **Local** `memory_forget` does not erase separately ingested Hindsight records; use Hindsight document/memory management on the connected bank as well when deleting remote data. An end-to-end forget-both-stores workflow is still needed.
 
-The background observer is a **single model-call observer and reflector**, not a verbatim port of Mastra Observational Memory or Supermemory. Semantic embeddings, remote hosted memory engines, and guaranteed cross-lingual paraphrase recall are not included. Full end-to-end quality requires multi-session correction, stale-fact and multilingual datasets; fast FTS lookup is not a quality benchmark.
+The background observer is a **single model-call observer and reflector**, not a verbatim port of Mastra Observational Memory or Supermemory. Semantic recall requires the optional Hindsight bank; guaranteed cross-lingual accuracy is not established. Full end-to-end quality requires multi-session correction, stale-fact and multilingual datasets; fast FTS lookup is not a quality benchmark.
 
 ## Testing
 

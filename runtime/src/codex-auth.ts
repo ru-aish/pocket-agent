@@ -41,9 +41,12 @@ function notifyActivity(state: AuthState): void {try {state.onActivity?.();} cat
 /** Includes rotated secrets remembered before mutating the shared credential object. */
 export function redactProviderSecrets(text: string, credentials: CodexCredentialInput): string {
   let result = String(text);
-  const variants = new Set([...authState(credentials).secrets].flatMap(secret=>[secret,JSON.stringify(secret).slice(1,-1)]));
+  const variants = new Set(providerSecretVariants(credentials));
   for (const secret of [...variants].sort((a,b)=>b.length-a.length)) result = result.replaceAll(secret, '[redacted]');
   return result;
+}
+export function providerSecretVariants(credentials: CodexCredentialInput): string[] {
+  return [...authState(credentials).secrets].flatMap(secret=>[secret,JSON.stringify(secret).slice(1,-1)]);
 }
 function authError(message: string): Error {return new Error(message);}
 

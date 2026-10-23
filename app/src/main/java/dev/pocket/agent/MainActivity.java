@@ -801,6 +801,7 @@ public final class MainActivity extends Activity implements AgentService.Observe
         Runnable updateAuth=()->{int mode=auth.getSelectedItemPosition();bearer.setVisibility(mode==1?View.VISIBLE:View.GONE);headers.setVisibility(mode==2?View.VISIBLE:View.GONE);};auth.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener(){public void onItemSelected(android.widget.AdapterView<?> p,View v,int pos,long id){updateAuth.run();}public void onNothingSelected(android.widget.AdapterView<?> p){}});updateAuth.run();
         panel.addView(text("Leave a saved secret blank to keep it encrypted. Custom headers support up to 8 pairs."));
         panel.addView(text("Remote tools can receive conversation details sent by the model. Connect only servers you trust."));
+        panel.addView(text("A server named Hindsight with a single-bank /mcp/<bank>/ URL automatically receives completed conversations and worker outcomes. Disable it to stop new uploads."));
         AlertDialog dialog=new AlertDialog.Builder(this).setTitle(existing==null?"Add MCP server":"Edit MCP server").setView(panel).setNegativeButton("Cancel",null).setPositiveButton("Save",null).create();
         dialog.setOnShowListener(ignored->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(view->{
             try {
