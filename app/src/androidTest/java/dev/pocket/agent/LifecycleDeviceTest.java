@@ -14,6 +14,7 @@ import android.os.Process;
 import android.os.SystemClock;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.ScrollView;
 import android.widget.TextView;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.platform.app.InstrumentationRegistry;
@@ -208,6 +209,40 @@ public class LifecycleDeviceTest {
             ClipboardManager clipboard = context().getSystemService(ClipboardManager.class);
             assertNotNull("Clipboard service missing", clipboard); assertTrue("Copy history did not publish a clip", clipboard.hasPrimaryClip());
             ClipData clip = clipboard.getPrimaryClip(); assertNotNull(clip); assertTrue(clip.getItemAt(0).coerceToText(context()).toString().contains(custom));
+
+            AtomicReference<ScrollView> transcriptScroll = new AtomicReference<>();
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+                ViewGroup frame = (ViewGroup) jump.get().getParent();
+                for (int i = 0; i < frame.getChildCount(); i++) {
+                    if (frame.getChildAt(i) instanceof ScrollView) { transcriptScroll.set((ScrollView) frame.getChildAt(i)); break; }
+                }
+                assertNotNull("Transcript scroll view missing", transcriptScroll.get());
+                TextView transcript = (TextView) transcriptScroll.get().getChildAt(0);
+                StringBuilder longTranscript = new StringBuilder();
+                for (int i = 0; i < 160; i++) longTranscript.append("message ").append(i).append("\n");
+                transcript.setText(longTranscript.toString());
+            });
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+                ScrollView scroll = transcriptScroll.get();
+                int viewport = scroll.getHeight() - scroll.getPaddingTop() - scroll.getPaddingBottom();
+                int bottom = Math.max(0, scroll.getChildAt(0).getHeight() - Math.max(0, viewport));
+                assertTrue("Test transcript did not become scrollable", bottom > 0);
+                scroll.scrollTo(0, bottom);
+                scroll.scrollTo(0, 0);
+            });
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+            assertEquals("Jump-to-bottom control did not appear while away from latest", View.VISIBLE, jump.get().getVisibility());
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> jump.get().performClick());
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+                ScrollView scroll = transcriptScroll.get();
+                int viewport = scroll.getHeight() - scroll.getPaddingTop() - scroll.getPaddingBottom();
+                int bottom = Math.max(0, scroll.getChildAt(0).getHeight() - Math.max(0, viewport));
+                assertTrue("Jump-to-bottom tap did not move the transcript", scroll.getScrollY() > 0);
+                assertTrue("Jump-to-bottom tap did not reach latest message", Math.abs(bottom - scroll.getScrollY()) <= 2);
+                assertEquals("Jump-to-bottom control stayed visible at latest message", View.GONE, jump.get().getVisibility());
+            });
 
             JSONObject synthetic = new JSONObject().put("provider", new JSONObject().put("mode", "openai").put("model", "safe-model").put("apiKey", "synthetic-secret"))
                     .put("messages", new JSONArray().put(new JSONObject().put("role", "user").put("text", "main-debug-message")))
