@@ -1,0 +1,143 @@
+{
+  "verified_at_utc": "2026-10-23T06:37:32.419750+00:00",
+  "endpoint": "https://chatgpt.com/backend-api/codex/realtime/calls?intent=quicksilver&architecture=avas",
+  "model": "gpt-live-1-codex",
+  "authentication": "Existing local ChatGPT subscription login",
+  "conclusion": "Startup instructions successfully carry recent-conversation facts and support a client-memory delegation workflow.",
+  "recent_history": {
+    "case": "recent_history",
+    "input_field_present": false,
+    "instructions_characters": 597,
+    "expected_words": [
+      "marigold",
+      "orbit",
+      "blue",
+      "button"
+    ],
+    "events": [
+      "input_transcript.added",
+      "output_transcript.added",
+      "session.started",
+      "turn.created",
+      "turn.delta",
+      "turn.done"
+    ],
+    "input_transcript": "",
+    "output_transcript": "",
+    "delegations": [],
+    "errors": [],
+    "sideband_connected": false,
+    "mocked_client_result_sent": false,
+    "http_status": 201,
+    "valid_sdp": true,
+    "assistant_turns": [
+      {
+        "transcript": "It's called Marigold Orbit, and next we agreed to test the blue button."
+      }
+    ],
+    "recall_pass": true,
+    "audio_packets": {
+      "incoming": 592,
+      "outgoing": 295
+    },
+    "memory_tool_requested": false
+  },
+  "memory_handoff": {
+    "case": "memory_handoff",
+    "input_field_present": false,
+    "instructions_characters": 645,
+    "expected_words": [
+      "copper",
+      "lantern"
+    ],
+    "events": [
+      "delegation.context.appended",
+      "delegation.created",
+      "input_transcript.added",
+      "output_transcript.added",
+      "session.started",
+      "session.usage.updated",
+      "turn.created",
+      "turn.delta",
+      "turn.done"
+    ],
+    "input_transcript": "",
+    "output_transcript": "",
+    "delegations": [
+      "What packing rule did I ask you to remember last week? Please retrieve it"
+    ],
+    "errors": [],
+    "sideband_connected": false,
+    "mocked_client_result_sent": true,
+    "http_status": 201,
+    "valid_sdp": true,
+    "assistant_turns": [
+      {
+        "transcript": " Checking your saved packing rule now. Found it \u2014 you said, always pack the copper lantern."
+      }
+    ],
+    "recall_pass": true,
+    "audio_packets": {
+      "incoming": 913,
+      "outgoing": 340
+    },
+    "memory_tool_requested": false
+  },
+  "interpretation": [
+    "The generated audio did not contain the seeded project name or agreed next action. Both were recovered from recent conversation embedded in instructions.",
+    "The memory result was a synthetic fixture returned by the probe client, not a real memory_search or Pi tool execution.",
+    "The memory delegation contained the user request, without explicit memory_search or memory_profile names. Pi must select and execute memory tools.",
+    "Both independent calls received server audio packets and produced matching assistant transcripts without runtime errors.",
+    "This validates text continuity via startup instructions, not restoration of historical audio, hidden voice-model state, or arbitrary history length.",
+    "No production application code, APK, phone state, or stored personal memory was changed."
+  ],
+  "scope": "Pre-integration Linux protocol probes. The Android startup-context builder is covered separately by focused tests.",
+  "session_input_probe": {
+    "verified_at_utc": "2026-10-23T06:23:50.136616+00:00",
+    "endpoint": "https://chatgpt.com/backend-api/codex/realtime/calls?intent=quicksilver&architecture=avas",
+    "model": "gpt-live-1-codex",
+    "authentication": "Existing local ChatGPT subscription login; no API key",
+    "data": "Only synthetic prior text and generated audio; no real microphone or phone access",
+    "conclusion": "session.input is rejected by the current AVAS subscription session schema",
+    "seeded_trial": {
+      "label": "seeded",
+      "input_field_present": true,
+      "history_messages": 2,
+      "expected_code": "opal tundra 8426",
+      "http_status": 201,
+      "valid_sdp": true,
+      "output": "",
+      "input": "",
+      "delegations": [],
+      "errors": [
+        {
+          "code": "invalid_request_error",
+          "param": "",
+          "message": "Invalid AVAS session_data: [ObjectParam] [input] [unknown_parameter] Unknown parameter: 'input'."
+        }
+      ],
+      "peer": "connected",
+      "channel": "closed",
+      "event_types": [
+        "error"
+      ],
+      "audio_packets": {
+        "incoming": 0,
+        "outgoing": 78
+      },
+      "recalled_seeded_code": false
+    },
+    "control": {
+      "input_field_present": false,
+      "http_status": 201,
+      "valid_sdp": true,
+      "audio_validation": "Incomplete: overall 150-second probe timeout"
+    },
+    "product_changes": false,
+    "limits": [
+      "HTTP 201 indicates call creation, not successful voice-session configuration.",
+      "Public GPT-Live schema does not establish compatibility with this subscription route.",
+      "History supplied through instructions was not tested."
+    ]
+  }
+}

@@ -1,0 +1,76 @@
+{
+  "date": "2026-10-24",
+  "scope": "Linux subscription AVAS protocol probes with silent WebAudio input and synthetic text. No phone microphone, real Pi task, or Android STT was used.",
+  "model": "gpt-live-1-codex",
+  "delegation": "client",
+  "standard_text_events": {
+    "mode": "user_text",
+    "events": [
+      "error",
+      "session.started"
+    ],
+    "errors": [
+      {
+        "code": "invalid_value",
+        "message": "Invalid value: 'conversation.item.create'. Supported values are: 'session.update', 'output_audio.playback.play', 'session.feedback', 'input_audio.pause', 'input_audio.resume', 'session.context.append', 'response.item.create', 'response.create', 'delegation.context.append', 'delegation.function_call_output.create', 'output_audio.send_dtmf_event', and 'session.close'.",
+        "param": "type"
+      },
+      {
+        "code": "invalid_request_error",
+        "message": "response.create requires a session with Responses delegation.",
+        "param": "type"
+      }
+    ],
+    "delegations": [],
+    "assistant_turns": [],
+    "http_status": 201,
+    "offer_seconds": 6.96,
+    "connected_seconds": 8.99,
+    "audio_packets": 0
+  },
+  "first_transcript_and_mocked_pi_result": {
+    "mode": "first_reply",
+    "events": [
+      "output_transcript.added",
+      "session.context.appended",
+      "session.started",
+      "turn.created",
+      "turn.delta",
+      "turn.done"
+    ],
+    "errors": [],
+    "delegations": [],
+    "assistant_turns": [
+      " Sure, it's copper meadow."
+    ],
+    "http_status": 201,
+    "offer_seconds": 11.23,
+    "connected_seconds": 13.33,
+    "audio_packets": 172,
+    "instructions_source_commit": "64ed33ecab30a7f2dc2464d2b4dc43a81e4314fb"
+  },
+  "notes": [
+    "conversation.item.create is not supported on this route; response.create is restricted to Responses delegation.",
+    "The successful case used the complete updated SubscriptionVoiceContext.BASE_INSTRUCTIONS, an already-submitted initial transcript as developer context, then a mocked Pi result as speakable session context.",
+    "Input audio must be active for the voice session timeline. An earlier probe with a suspended WebAudio clock acknowledged context without speaking.",
+    "An earlier developer-context wording that asked the model to wait did not produce an answer. The updated wording explicitly permits subsequent speakable results.",
+    "The final protocol probe proves accepted context and matching assistant speech/audio, not Android recognition quality, actual Pi execution, or audible speaker routing.",
+    "A receive-only probe acknowledged speakable context but produced no assistant turn or audio. Output-only Android announcements now use the system TextToSpeech engine without a WebRTC call or microphone. This does not validate actual system-engine audibility.",
+    "Later prompt wording explicitly distinguishes the initial transcript on developer context from Pi replies on speakable context; the recorded full-instructions live probe predates that wording clarification."
+  ],
+  "receive_only_without_input": {
+    "mode": "recvonly",
+    "events": [
+      "session.context.appended",
+      "session.started",
+      "session.usage.updated"
+    ],
+    "errors": [],
+    "delegations": [],
+    "assistant_turns": [],
+    "http_status": 201,
+    "offer_seconds": 1.91,
+    "connected_seconds": 3.89,
+    "audio_packets": 0
+  }
+}

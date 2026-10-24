@@ -60,3 +60,20 @@
 
 # Release instrumentation directly exercises persisted local wake tuning.
 -keep class dev.pocket.agent.WakeWordSettings { *; }
+-keep class dev.pocket.agent.SubscriptionVoiceFailureStore { *; }
+-keep class dev.pocket.agent.SubscriptionVoiceContext { *; }
+-keep class dev.pocket.agent.SubscriptionVoiceAudioRoute { *; }
+-keep class dev.pocket.agent.SubscriptionVoiceOutputSpeech** { *; }
+-keep interface dev.pocket.agent.SubscriptionVoiceOutputSpeech$* { *; }
+
+# WebRTC's JNI entry points reference org.webrtc classes by their original names.
+# Preserve JNI-visible classes/methods in the minified release APK.
+-keep class org.webrtc.** { *; }
+# Keep only JNI-called JniZero methods: the bundled AAR references an optional
+# generated JniZeroJni class that it does not ship, so retaining all methods fails R8.
+-keepclasseswithmembers class org.jni_zero.** {
+    @org.jni_zero.CalledByNative <methods>;
+}
+-keepclasseswithmembers class org.jni_zero.** {
+    @org.jni_zero.CalledByNativeUnchecked <methods>;
+}

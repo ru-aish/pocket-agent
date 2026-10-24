@@ -22,6 +22,8 @@ import org.json.JSONObject;
 /** Allowlisted credentials encrypted with a non-exportable Android Keystore key. */
 public final class CredentialStore {
     private static final String ALIAS = "pocket-agent-provider-v1";
+    // Encrypted alongside the provider, but never exposed to Pi's provider config.
+    private static final String VOICE_ACCOUNT = "subscriptionVoiceAccount";
     // Runtime refresh and the settings Activity use different store instances.
     private static final Object LOCK = new Object();
     public static final String CODEX_ACCOUNT = "codex-account";
@@ -73,6 +75,7 @@ public final class CredentialStore {
             current.remove("reasoningEffortModel"); current.remove("reasoningEfforts"); changed = true;
         }
         if (changed) write(current);
+        current.remove(VOICE_ACCOUNT);
         current.put("mcpServers", sanitizedMcpServers(current.optJSONArray("mcpServers")));
         return current;
     } }
@@ -146,6 +149,12 @@ public final class CredentialStore {
                 allowed.put("model", model(settings.optString("model")));
             }
             allowed.put("providerRevision", providerRevision(current, allowed));
+            JSONObject voice = current.optJSONObject(VOICE_ACCOUNT);
+            // Preserve the voice login when chat switches to an unrelated model.
+            if (voice == null && CODEX_ACCOUNT.equals(current.optString("authMode")))
+                voice = accountSnapshot(current);
+            if (CODEX_ACCOUNT.equals(mode)) voice = accountSnapshot(allowed);
+            if (voice != null) allowed.put(VOICE_ACCOUNT, voice);
             write(allowed);
         }
     }
@@ -259,10 +268,81 @@ public final class CredentialStore {
                 if (account.has(field)) allowed.put(field, account.get(field));
             String revision = current.optString("providerRevision");
             allowed.put("providerRevision", revision.isEmpty() ? UUID.randomUUID().toString() : revision);
+            JSONObject voice = current.optJSONObject(VOICE_ACCOUNT);
+            if (voice == null || current.optString("accountId").equals(voice.optString("accountId")))
+                voice = accountSnapshot(allowed);
+            allowed.put(VOICE_ACCOUNT, voice);
             write(allowed);
+            allowed.remove(VOICE_ACCOUNT);
             return new JSONObject(allowed.toString());
         }
     }
+    /** The voice account is separate from the currently selected chat provider. */
+    public JSONObject getVoiceCodex() throws Exception {
+        synchronized (LOCK) {
+            JSONObject current = read();
+            JSONObject voice = current.optJSONObject(VOICE_ACCOUNT);
+            if (voice != null) return new JSONObject(voice.toString());
+            return CODEX_ACCOUNT.equals(current.optString("authMode"))
+                    ? accountSnapshot(current) : new JSONObject();
+        }
+    }
+
+    public void saveVoiceCodex(JSONObject input) throws Exception {
+        synchronized (LOCK) {
+            JSONObject checked = CodexAccountAuth.validateCredentials(input, false);
+            JSONObject current = read();
+            current.put(VOICE_ACCOUNT, accountSnapshot(checked));
+            write(current);
+        }
+    }
+
+    /** Rotates the voice account without switching or overwriting the selected chat model. */
+    public JSONObject updateVoiceCodex(JSONObject update) throws Exception {
+        synchronized (LOCK) {
+            JSONObject current = read();
+            JSONObject voice = current.optJSONObject(VOICE_ACCOUNT);
+            if (voice == null && CODEX_ACCOUNT.equals(current.optString("authMode")))
+                voice = accountSnapshot(current);
+            String old = update.optString("oldRefreshToken");
+            if (voice == null || old.isEmpty() || !MessageDigest.isEqual(
+                    old.getBytes(StandardCharsets.UTF_8),
+                    voice.optString("refreshToken").getBytes(StandardCharsets.UTF_8)))
+                throw new IllegalStateException("Voice account changed while refreshing");
+            JSONObject refreshed = CodexAccountAuth.validateCredentials(update, true);
+            if (!voice.optString("accountId").equals(refreshed.optString("accountId")))
+                throw new IllegalArgumentException("Refreshed voice account does not match");
+            if (CODEX_ACCOUNT.equals(current.optString("authMode"))
+                    && old.equals(current.optString("refreshToken"))
+                    && voice.optString("accountId").equals(current.optString("accountId"))) {
+                updateCodex(update);
+            } else {
+                current.put(VOICE_ACCOUNT, accountSnapshot(refreshed));
+                write(current);
+            }
+            return getVoiceCodex();
+        }
+    }
+
+    public void signOutVoiceCodex() throws Exception {
+        synchronized (LOCK) {
+            JSONObject current = read();
+            if (CODEX_ACCOUNT.equals(current.optString("authMode"))) {
+                signOutCodex();
+            } else {
+                current.remove(VOICE_ACCOUNT);
+                write(current);
+            }
+        }
+    }
+
+    private static JSONObject accountSnapshot(JSONObject source) throws Exception {
+        JSONObject snapshot = new JSONObject().put("authMode", CODEX_ACCOUNT);
+        for (String field : new String[]{"accessToken", "refreshToken", "accountId", "expiresAt", "idToken"})
+            if (source.has(field)) snapshot.put(field, source.get(field));
+        return snapshot;
+    }
+
     public void signOutCodex() throws Exception {
         synchronized (LOCK) {
             JSONObject current = read();
@@ -271,6 +351,10 @@ public final class CredentialStore {
             if (CODEX_ACCOUNT.equals(current.optString("authMode"))) write(new JSONObject().put("authMode", "scripted").put("model", "scripted").put("endpoint", "https://api.openai.com/v1")
                     .put("reasoningEffort", preferredEffort).put("preferredReasoningEffort", preferredEffort).put("providerRevision", UUID.randomUUID().toString())
                     .put("mcpServers", sanitizedMcpServers(current.optJSONArray("mcpServers"))));
+            else if (current.has(VOICE_ACCOUNT)) {
+                current.remove(VOICE_ACCOUNT);
+                write(current);
+            }
         }
     }
     private static String canonicalMode(String mode) {

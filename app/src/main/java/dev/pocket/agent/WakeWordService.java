@@ -116,7 +116,8 @@ public final class WakeWordService extends Service {
         }
         if (ACTION_ENABLE.equals(action)) {
             boolean keyConfigured;
-            try { keyConfigured = new VoiceCredentialStore(this).configured(); }
+            try { keyConfigured = SubscriptionVoiceSettings.enabled(this)
+                    || new VoiceCredentialStore(this).configured(); }
             catch (RuntimeException unavailable) {
                 Log.w("JarvisWake", "Deepgram key cannot be read; wake word not enabled");
                 stopSelf(); return START_NOT_STICKY;
@@ -157,7 +158,9 @@ public final class WakeWordService extends Service {
 
     private synchronized void resume() {
         if (!enabled || transitioning || recording.get() || (enrollmentSessions.get() != 0)) return;
-        if (VoiceListeningService.isActive()) { paused = true; return; }
+        if (VoiceListeningService.isActive() || SubscriptionVoiceService.isActive()) {
+            paused = true; return;
+        }
         paused = false;
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) return;
         recording.set(true);
@@ -260,11 +263,10 @@ public final class WakeWordService extends Service {
                     paused = true;
                     getSystemService(NotificationManager.class).notify(
                         NOTIFICATION, notification("Active voice conversation"));
-                    if (VoiceSttSettings.mode(this).usesDeepgramStt())
-                        playAcknowledgement();
+                    if (VoiceSttSettings.mode(this).usesDeepgramStt()
+                        && !SubscriptionVoiceSettings.enabled(this)) playAcknowledgement();
                     try {
-                        startForegroundService(new Intent(this, VoiceListeningService.class)
-                            .setAction(VoiceListeningService.ACTION_START)
+                        startForegroundService(SubscriptionVoiceSettings.wakeIntent(this)
                             .putExtra(EXTRA_WAKE_PREROLL, finalWakeTail));
                     } catch (RuntimeException denied) {
                         Log.e("JarvisWake", "Voice handoff unavailable", denied);
@@ -272,7 +274,8 @@ public final class WakeWordService extends Service {
                         transitioning = false;
                         resume();
                     }
-                } else if (enabled && !paused && !VoiceListeningService.isActive() && !(enrollmentSessions.get() != 0)) {
+                } else if (enabled && !paused && !VoiceListeningService.isActive() && !SubscriptionVoiceService.isActive()
+                        && !(enrollmentSessions.get() != 0)) {
                     transitioning = false;
                     if (needsBackoff) {
                         getSystemService(NotificationManager.class).notify(NOTIFICATION,

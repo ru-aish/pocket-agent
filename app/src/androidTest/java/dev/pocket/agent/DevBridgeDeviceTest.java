@@ -59,7 +59,15 @@ public class DevBridgeDeviceTest {
             socket.getOutputStream().flush();
             java.io.ByteArrayOutputStream response=new java.io.ByteArrayOutputStream();
             byte[] buffer=new byte[8192];int n;
-            while((n=socket.getInputStream().read(buffer))!=-1)response.write(buffer,0,n);
+            try {
+                while((n=socket.getInputStream().read(buffer))!=-1)response.write(buffer,0,n);
+            } catch (java.net.SocketException resetAfterEarlyRejection) {
+                // The bridge rejects untrusted Origin before reading the POST body.
+                // TCP may reset on close with unread input after sending a valid 403.
+                // Preserve any HTTP response for the test's status assertions; a
+                // reset before any response is still a genuine connection failure.
+                if (response.size()==0) throw resetAfterEarlyRejection;
+            }
             return response.toString("UTF-8");
         }
     }

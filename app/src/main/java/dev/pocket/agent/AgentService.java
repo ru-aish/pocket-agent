@@ -56,6 +56,7 @@ public final class AgentService extends Service {
             WakeWordService.disableImmediately(this);
             stopService(new Intent(this, WakeWordService.class));
             stopService(new Intent(this, VoiceListeningService.class));
+            stopService(new Intent(this, SubscriptionVoiceService.class));
             stopSelf(); return START_NOT_STICKY;
         }
         if (stopping) return START_NOT_STICKY;
@@ -112,7 +113,7 @@ public final class AgentService extends Service {
             if ("voice_announce".equals(event.optString("type"))) {
                 try {
                     VoiceAnnouncement request = VoiceAnnouncement.fromEvent(event);
-                    startForegroundService(VoiceAnnouncement.intent(this, request));
+                    startForegroundService(SubscriptionVoiceSettings.announcementIntent(this, request));
                 } catch (RuntimeException failure) {
                     Log.w("PocketVoice", "Agent-initiated speech could not be started", failure);
                     reportVoiceFailure(this, event.optString("id"),

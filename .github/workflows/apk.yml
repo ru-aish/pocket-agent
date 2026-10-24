@@ -30,6 +30,18 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+      - name: Verify subscription voice lifecycle and playback gates
+        run: |
+          mkdir -p /tmp/pocket-voice-sim
+          javac -d /tmp/pocket-voice-sim \
+            app/src/main/java/dev/pocket/agent/SubscriptionVoiceLifecycle.java \
+            app/src/main/java/dev/pocket/agent/SubscriptionVoicePlaybackGate.java \
+            scripts/SubscriptionVoiceLifecycleSimulator.java \
+            scripts/SubscriptionVoicePlaybackGateSimulator.java \
+            scripts/SubscriptionVoiceStartupSimulator.java
+          java -cp /tmp/pocket-voice-sim dev.pocket.agent.SubscriptionVoiceLifecycleSimulator
+          java -cp /tmp/pocket-voice-sim dev.pocket.agent.SubscriptionVoicePlaybackGateSimulator
+          java -cp /tmp/pocket-voice-sim dev.pocket.agent.SubscriptionVoiceStartupSimulator
       - name: Test provider protocols, display ownership and private emulator provisioning
         run: |
           python3 -m pip install aiohttp==3.13.5
@@ -69,6 +81,8 @@ jobs:
             set -e
             ./gradlew --no-daemon :app:connectedReleaseAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=dev.pocket.agent.VoicePipelineDeviceTest
             ./gradlew --no-daemon :app:connectedReleaseAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=dev.pocket.agent.VoiceAssistantDeviceTest
+            ./gradlew --no-daemon :app:connectedReleaseAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=dev.pocket.agent.SubscriptionVoiceActivationDeviceTest
+            ./gradlew --no-daemon :app:connectedReleaseAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=dev.pocket.agent.SubscriptionVoiceContextDeviceTest
             ./gradlew --no-daemon :app:connectedReleaseAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=dev.pocket.agent.LifecycleDeviceTest#mainThreadPromptAndDebugControlsWorkOnDevice
             adb install -r fixture/build/outputs/apk/debug/fixture-debug.apk
             ./gradlew --no-daemon :app:connectedReleaseAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=dev.pocket.agent.RuntimeDeviceTest#physicalDisplayCanLaunchObserveAndActWithoutVirtualLease
