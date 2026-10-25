@@ -7,6 +7,12 @@ type McpServer={id:string,name:string,url:string,enabled?:boolean,authMode?:'non
 type RemoteClient=Pick<McpClient,'close'|'callTool'>;
 type Entry={server:McpServer,client:RemoteClient,tools:Tool[]};
 export type McpConnector=(server:McpServer)=>Promise<{client:RemoteClient,tools:Tool[]}>;
+export function isHindsightBank(server:McpServer):boolean {
+  try {
+    return (server.id==='hindsight'||server.name.trim().toLowerCase()==='hindsight')
+      && /\/mcp\/[^/]+\/?$/.test(new URL(server.url).pathname);
+  } catch {return false;}
+}
 const safeIdentifier=(value:string)=>value.replace(/[^A-Za-z0-9_-]/g,'_').slice(0,40)||'tool';
 const delay=(ms:number)=>new Promise<void>(resolve=>setTimeout(resolve,ms));
 export async function boundMcpJsonResponse(response:Response):Promise<Response> {
@@ -93,6 +99,17 @@ export class McpToolRegistry {
   get toolNames():string[]{return this.dynamic.map(tool=>tool.name);}
   status():any[]{return this.entries.map(entry=>({id:entry.server.id,name:entry.server.name,tools:entry.tools.map(tool=>tool.name)}));}
   errorsForSettings():any[]{return [...this.errors].map(([id,error])=>({id,error}));}
+  /** A bank-scoped Hindsight MCP is opt-in via the saved server name "Hindsight". */
+  async hindsightCall(name:'retain'|'recall',target:string,args:Record<string,unknown>):Promise<string|null>{
+    const entry=this.entries.find(item=>isHindsightBank(item.server)&&item.server.url===target
+      &&item.tools.some(tool=>tool.name===name));
+    if(!entry)return null;
+    const result=await entry.client.callTool(name,args,{timeoutMs:name==='recall'?5_000:10_000});
+    if(result.isError)throw new Error(`Hindsight ${name} failed`);
+    if(name==='retain')return 'accepted';
+    return toLlmContent(result).filter((block:any)=>block.type==='text')
+      .map((block:any)=>this.sanitize(String(block.text))).join('\n').slice(0,10_000);
+  }
   async close():Promise<void>{
     this.closed=true;
     const current=[...this.connecting,...this.entries.map(entry=>entry.client)];
