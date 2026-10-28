@@ -1,0 +1,78 @@
+app	Open Spotify
+app	Could you launch the calculator
+app	Bring up WhatsApp
+app	Take me to YouTube
+app	Fire up the camera app
+app	Pull up Google Maps
+app	Start Gmail
+url	Open https://example.com
+url	Launch https://wikipedia.org
+url	Open http://example.org
+message	Send an SMS to Rahul saying I will be late
+message	Text Priya that I am on my way
+message	Send a WhatsApp message to Alex saying hello
+message	WhatsApp Mum saying dinner is ready
+message	Send a message to Sam
+message	Message Dad saying call me
+message	Text Alex
+call	Call Mum
+call	Could you ring Rahul
+call	Dial +14155550123
+call	Please call Alex Chen
+contacts	Find the contact for Rahul
+contacts	Look up the phone number for Priya
+contacts	Show me contacts for Alex
+contacts	Search for contact Sam
+apps	List my installed apps
+apps	Show me my apps
+apps	List apps
+notifications	Read my notifications
+notifications	Show my recent notifications
+notifications	Check current notifications
+calendar	Read my calendar for today
+calendar	Show my events today
+calendar	Check my schedule today
+timer	Set a timer for ten minutes
+timer	Start a timer for 30 seconds
+timer	Give me a timer for two hours
+timer	Set a timer
+timer	Create a countdown timer for five minutes
+alarm	Set an alarm for 7 am
+alarm	Create an alarm at 18:30
+alarm	Set me an alarm
+media	Pause the music
+media	Resume playback
+media	Play music on Spotify
+media	Skip the track
+media	Next song
+media	Previous track
+other	Don't open Spotify
+other	Find some music that matches my mood
+other	Research a topic and summarize it
+other	What is the weather today
+other	If it rains tomorrow call Mum
+other	Cancel my alarm
+other	Why is my phone slow
+other	Tell me how to send a message
+other	Remind me when I leave home
+other	Delete all my messages
+volume	Turn the volume up
+volume	Lower the music volume
+volume	Set media volume to 50 percent
+volume	Mute the music
+volume	Unmute
+brightness	Set brightness to 40 percent
+brightness	Change screen brightness to 80 percent
+flashlight	Turn on the flashlight
+flashlight	Switch the torch off
+settings	Open Wi-Fi settings
+settings	Show me Bluetooth settings
+settings	Open battery settings
+clock	Show me alarms
+clock	Open the timers screen
+calendars	List my calendars
+calendars	Show calendars
+navigation	Go home
+navigation	Go back
+navigation	Show me recent apps
+navigation	Show the home screen

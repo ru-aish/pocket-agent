@@ -124,3 +124,26 @@ test('an approval expiring while a UI tool waits for a display prevents native m
   await assert.rejects(()=>tool.execute('expired-during-wait',{kind:'click',snapshot_id:'snap',selector:{text:'Send'},operation_id:'fixture_operation_0001'}),/Approval expired/);
   assert.equal(dispatches,0);
 });
+
+test('everyday direct controls use native APIs and settings requires an explicit physical target',async()=>{
+ let acquisitions=0;const calls:any[]=[];
+ const tools=nativeTools({ensureDisplay:async()=>{acquisitions++;return {};},call:(_method:string,args:any)=>{calls.push(args);return {status:'verified'};}},'quick-controls');
+ const op='20741-0123456789abcdef_quick_controls_0001';
+ for(const [name,args] of [
+  ['phone_device_info',{}],['phone_volume',{action:'set',percent:35,operation_id:op}],
+  ['phone_brightness',{percent:60,operation_id:op}],['phone_flashlight',{enabled:true,operation_id:op}],
+  ['phone_settings',{screen:'wifi',display_target:'physical',operation_id:op}],
+ ] as const) {
+  const tool=tools.find(t=>t.name===name)!;
+  assert.deepEqual(validateToolArguments(tool,{type:'toolCall',id:name,name,arguments:args}),args);
+  await tool.execute(name,args);
+ }
+ assert.equal(acquisitions,0);
+ assert.equal(calls.length,5);
+ assert.deepEqual(calls.map(c=>c.name),['phone_device_info','phone_volume','phone_brightness','phone_flashlight','phone_settings']);
+ const settings=tools.find(t=>t.name==='phone_settings')!;
+ assert.throws(()=>validateToolArguments(settings,{type:'toolCall',id:'missing',name:settings.name,arguments:{screen:'wifi',operation_id:op}}),/display_target/);
+ assert.throws(()=>validateToolArguments(settings,{type:'toolCall',id:'virtual',name:settings.name,arguments:{screen:'wifi',display_target:'virtual',operation_id:op}}),/display_target/);
+ const volume=tools.find(t=>t.name==='phone_volume')!;
+ assert.throws(()=>validateToolArguments(volume,{type:'toolCall',id:'loud',name:volume.name,arguments:{action:'set',percent:101,operation_id:op}}),/percent/);
+});

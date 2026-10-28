@@ -909,3 +909,45 @@ test('explicit same-ID catalog workers keep their reasoning restriction through 
    assert.deepEqual(efforts,['low','low','low']);
  } finally {globalThis.fetch=originalFetch;}
 });
+
+test('local voice exchanges persist in main history without starting inference or tools',async()=>{
+ const bridge=new Bridge(),runtime=new PocketRuntime(bridge);
+ let inference=0;runtime.main.agent.streamFunction=(()=>{inference++;throw Error('Local command must not infer');}) as any;
+ command(runtime,{action:'record_local_voice',text:'What time is it?',response:"It's 9:30 AM."});
+ await until(()=>runtime.state().messages.some((m:any)=>m.text==="It's 9:30 AM."));
+ assert.equal(inference,0);assert.equal(bridge.tools.length,0);
+ assert.equal(runtime.main.messages.at(-1).model,'quick-command');
+ assert.equal(runtime.main.messages.at(-1).usage.totalTokens,0);
+ const restored=new PocketRuntime(bridge);
+ assert.equal(restored.main.messages.at(-1).content[0].text,"It's 9:30 AM.");
+ assert.ok(!bridge.events.some(e=>e.type==='voice_delta'),'recording does not duplicate spoken output');
+});
+
+test('local voice recording rolls back the queue when persistence fails',()=>{
+ class Broken extends Bridge {call(method:string,args:string){if(method==='store.save')return JSON.stringify({ok:false,error:'disk full'});return super.call(method,args);}}
+ const runtime=new PocketRuntime(new Broken());
+ assert.equal(JSON.parse(runtime.dispatch(JSON.stringify({action:'record_local_voice',text:'Set a timer',response:'Timer requested.'}))).ok,false);
+ assert.equal((runtime as any).inbox.length,0);
+ assert.ok(!runtime.main.messages.some((m:any)=>JSON.stringify(m).includes('Timer requested')));
+});
+
+test('a local voice exchange resumes a paused main queue and rejects a full conversation',async()=>{
+ const bridge=new Bridge(),runtime=new PocketRuntime(bridge);
+ (runtime as any).mainPaused=true;
+ command(runtime,{action:'record_local_voice',text:'What time is it?',response:"It's 9:30 AM."});
+ await until(()=>runtime.state().messages.some((m:any)=>m.text==="It's 9:30 AM."));
+ assert.equal((runtime as any).mainPaused,false);
+ (runtime as any).mainPaused=true;
+ runtime.main.full=()=>true;
+ const rejected=JSON.parse(runtime.dispatch(JSON.stringify({action:'record_local_voice',text:'Another question',response:'Answer'})));
+ assert.equal(rejected.ok,false);assert.match(rejected.error,/context limit/);
+ assert.equal((runtime as any).mainPaused,true);
+ assert.equal((runtime as any).inbox.length,0);
+});
+
+test('local voice queue rolls back the paused state if persistence fails',()=>{
+ class Broken extends Bridge {call(method:string,args:string){if(method==='store.save')return JSON.stringify({ok:false,error:'disk full'});return super.call(method,args);}}
+ const runtime=new PocketRuntime(new Broken());(runtime as any).mainPaused=true;
+ const result=JSON.parse(runtime.dispatch(JSON.stringify({action:'record_local_voice',text:'Question',response:'Answer'})));
+ assert.equal(result.ok,false);assert.equal((runtime as any).mainPaused,true);assert.equal((runtime as any).inbox.length,0);
+});

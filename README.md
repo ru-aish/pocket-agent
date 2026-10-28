@@ -41,6 +41,18 @@ credentials afterward. It does not change the PC's Codex cache. Phone tools and
 all agent scheduling execute locally in the APK. See [AUTH.md](docs/AUTH.md) for
 device sign-in, secure import and the optional legacy development relay.
 
+## Local voice commands
+
+Settings → **Handle supported voice commands locally** (enabled by default) uses a local route before
+normal agent inference. Everyday time/date, battery/network, arithmetic and unit
+conversion queries need no LLM. A bundled 23 MB INT8 MiniLM encoder plus validated
+slots handles supported action paraphrases and compounds: timers, alarms, media,
+volume, brightness, flashlight, app/URL launches, navigation, contacts, SMS and
+current WhatsApp notification replies. Ambiguous contacts/numbers/SIMs ask a spoken
+follow-up; unsupported requests use the existing agent. New WhatsApp conversations
+still use the agent path. Existing speech recognition and synthesis are unchanged.
+See [supported requests, permission requirements, tests and limits](docs/QUICK_COMMANDS.md).
+
 ## Scheduled work and personal instructions
 
 Ask the assistant to save a schedule, a future wake-up, or a notification watch.

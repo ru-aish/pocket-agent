@@ -102,7 +102,7 @@ export class PocketRuntime {
     this.autonomy=new AutonomyEngine(this);
     const phoneTools=[...nativeTools(this,'placeholder').map(x=>x.name),...MEMORY_TOOL_NAMES,'speak_to_user',...AUTONOMY_TOOL_NAMES];
     this.registry.agents.set('phone-operator',{name:'phone-operator',description:'Performs bounded Android workflows and verifies native outcomes.',source:'project',systemPrompt:WORKER_PROMPT,tools:[...phoneTools,'subagent']});
-    this.registry.agents.set('researcher',{name:'researcher',description:'Reads phone capabilities and app data with no screen mutations.',source:'project',systemPrompt:'Read-only bounded worker. Report evidence and uncertainty.',tools:['phone_capabilities','phone_apps','phone_contacts','phone_calendars','phone_calendar_events','phone_notifications','phone_notification_read','phone_operation','memory_search','memory_profile','history_search','history_read','speak_to_user','subagent']});
+    this.registry.agents.set('researcher',{name:'researcher',description:'Reads phone capabilities and app data with no screen mutations.',source:'project',systemPrompt:'Read-only bounded worker. Report evidence and uncertainty.',tools:['phone_capabilities','phone_device_info','phone_apps','phone_contacts','phone_calendars','phone_calendar_events','phone_notifications','phone_notification_read','phone_operation','memory_search','memory_profile','history_search','history_read','speak_to_user','subagent']});
     this.registry.agents.set('autonomy-worker',{name:'autonomy-worker',description:'A dedicated bounded autonomous run.',source:'project',systemPrompt:AUTONOMOUS_WORKER_PROMPT,tools:this.autonomousGrant([])});
     this.reloadCredentials();
     void this.refreshMcpTools();
@@ -376,6 +376,20 @@ export class PocketRuntime {
         this.deliveryTransaction=true;
         const item=this.inbox.shift();
         const previousMessages=this.main.agent.state.messages;
+        if(item.type==='local_voice') {
+          // Local commands already executed on Android. Record their real outcome without
+          // another inference turn or replaying any tool. Serialize behind active main work.
+          const timestamp=Date.now();
+          this.main.agent.state.messages=[...previousMessages,
+            {role:'user',content:[{type:'text',text:item.text}],timestamp},
+            {role:'assistant',content:[{type:'text',text:item.response}],api:'pocket-local',provider:'pocket',model:'quick-command',
+             usage:{input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}},stopReason:'stop',timestamp}];
+          if(!this.save()) {
+            this.main.agent.state.messages=previousMessages;this.inbox.unshift(item);
+            this.deliveryTransaction=false;this.coalesce();break;
+          }
+          this.deliveryTransaction=false;this.publish();continue;
+        }
         const previousTurns=this.mainTurns,previousInterrupted=this.mainInterrupted,previousSpeaking=this.speakingTurn;
         let completion:any,receiptBefore:any,deliveredAdded=false;
         let prompt=item.text;
@@ -518,6 +532,16 @@ export class PocketRuntime {
         for(const c of this.runtime.listConversations().filter(c=>c.agent.name==='autonomy-worker'&&c.currentGeneration))void this.runtime.cancelSubagent(c.conversationId).catch(this.reportError);
       } else if(cmd.action==='prepare_shutdown') {
         void this.prepareShutdown();
+      } else if(cmd.action==='record_local_voice') {
+        if(typeof cmd.text!=='string'||!cmd.text.trim()||cmd.text.length>1000||typeof cmd.response!=='string'||!cmd.response.trim()||cmd.response.length>4000)throw Error('Invalid local voice exchange');
+        if(this.inbox.length>=32)throw Error('Pending message limit reached (32)');
+        if(this.main.full())throw Error('Main conversation is at the mobile context limit; history and pending results were retained');
+        const previousPaused=this.mainPaused;
+        this.mainPaused=false;
+        const queued={type:'local_voice',text:cmd.text,response:cmd.response};
+        this.inbox.push(queued);
+        if(!this.save()){this.inbox.pop();this.mainPaused=previousPaused;throw Error('Could not durably record local voice exchange');}
+        queueMicrotask(()=>void this.pump());
       } else if(cmd.action==='send') {
         if(typeof cmd.text!=='string'||!cmd.text.trim()||cmd.text.length>50000)throw new Error('Message must contain 1..50000 characters');
         if(this.inbox.length>=32)throw new Error('Pending message limit reached (32)');

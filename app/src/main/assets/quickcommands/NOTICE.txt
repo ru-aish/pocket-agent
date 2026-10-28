@@ -1,0 +1,10 @@
+Local command encoder: sentence-transformers/all-MiniLM-L6-v2
+Revision: 5641a7880f40ebf4035d05e60c5f9b7a9c272c84
+Source: https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2
+ONNX artifact: onnx/model_qint8_arm64.onnx (dynamic INT8)
+Model SHA-256: 4278337fd0ff3c68bfb6291042cad8ab363e1d9fbc43dcb499fe91c871902474
+Vocabulary SHA-256: 07eced375cec144d27c900241f3e339478dec958f92fddbc551f295c992038a3
+Model and vocabulary licensed under Apache License 2.0.
+Model authors: Nils Reimers and the Sentence Transformers contributors.
+The application uses original action examples in prototypes.tsv; prototype embeddings are generated from the same pinned model.
+English only. Similarity scores are not calibrated probabilities.

@@ -11,13 +11,18 @@ val androidNgrokJar = tasks.register<Jar>("androidNgrokJar") {
     from({ ngrokNativeClasses.map { zipTree(it) } })
     exclude("com/ngrok/Runtime*.class")
 }
+val quickTestProfile = providers.gradleProperty("quickCommandTestProfile").isPresent
 android {
     namespace = "dev.pocket.agent"
     compileSdk = 36
     ndkVersion = "27.2.12479018"
     defaultConfig {
-        applicationId = if (providers.gradleProperty("isolatedDeviceValidation").isPresent)
+        applicationId = if (quickTestProfile) "dev.pocket.agent.quicktest"
+        else if (providers.gradleProperty("isolatedDeviceValidation").isPresent)
             "dev.pocket.agent.historyvalidation" else "dev.pocket.agent"
+        manifestPlaceholders["appLabel"] = if (quickTestProfile) "Pocket Agent Quick Test" else "Pocket Agent"
+        manifestPlaceholders["phoneToolsLabel"] = if (quickTestProfile) "Pocket Agent Quick Test phone tools" else "Pocket Agent phone tools"
+        manifestPlaceholders["notificationToolsLabel"] = if (quickTestProfile) "Pocket Agent Quick Test notification tools" else "Pocket Agent notification tools"
         minSdk = 31
         targetSdk = 36
         versionCode = 8

@@ -1,0 +1,582 @@
+[
+  {
+    "text": "Hey Jarvis, can you open Spotify and set a timer for ten minutes?",
+    "local": true,
+    "expected_intents": [
+      "app",
+      "timer"
+    ],
+    "expected_mutations": [
+      "phone_open_app",
+      "phone_timer"
+    ]
+  },
+  {
+    "text": "Could you bring up YouTube and start a timer for forty five seconds?",
+    "local": true,
+    "expected_intents": [
+      "app",
+      "timer"
+    ],
+    "expected_mutations": [
+      "phone_open_app",
+      "phone_timer"
+    ]
+  },
+  {
+    "text": "Would you launch Calculator please?",
+    "local": true,
+    "expected_intents": [
+      "app"
+    ],
+    "expected_mutations": [
+      "phone_open_app"
+    ]
+  },
+  {
+    "text": "Pull up Spotify",
+    "local": true
+  },
+  {
+    "text": "Fire up YouTube",
+    "local": true
+  },
+  {
+    "text": "Take me to Calculator",
+    "local": true
+  },
+  {
+    "text": "Bring up https://news.example.com",
+    "local": true
+  },
+  {
+    "text": "Set a countdown timer for two minutes and thirty seconds",
+    "local": true,
+    "expected_intents": [
+      "timer"
+    ],
+    "expected_mutations": [
+      "phone_timer"
+    ]
+  },
+  {
+    "text": "Give me a timer for twenty-five minutes",
+    "local": true
+  },
+  {
+    "text": "Start a timer",
+    "local": true
+  },
+  {
+    "text": "Set an alarm for 6:45 am",
+    "local": true,
+    "expected_intents": [
+      "alarm"
+    ],
+    "expected_mutations": [
+      "phone_alarm"
+    ]
+  },
+  {
+    "text": "Create an alarm at 22:30",
+    "local": true
+  },
+  {
+    "text": "Set an alarm",
+    "local": true
+  },
+  {
+    "text": "Text Rahul saying I will arrive at six",
+    "local": true,
+    "expected_intents": [
+      "message"
+    ],
+    "expected_mutations": []
+  },
+  {
+    "text": "Could you send an SMS to Priya saying Meet me at home?",
+    "local": true
+  },
+  {
+    "text": "Send a text message to Alex that says Lunch is ready",
+    "local": true
+  },
+  {
+    "text": "WhatsApp Mum saying I am on my way",
+    "local": true,
+    "expected_intents": [
+      "message"
+    ],
+    "expected_mutations": []
+  },
+  {
+    "text": "Send a WhatsApp message to Alex saying I am outside",
+    "local": true
+  },
+  {
+    "text": "Send a message to Rahul saying Hello",
+    "local": true
+  },
+  {
+    "text": "Text Rahul",
+    "local": true
+  },
+  {
+    "text": "Call Priya",
+    "local": true
+  },
+  {
+    "text": "Ring Rahul Shah",
+    "local": true
+  },
+  {
+    "text": "Call +14155550123",
+    "local": true,
+    "expected_intents": [
+      "call"
+    ],
+    "expected_mutations": [
+      "phone_call"
+    ]
+  },
+  {
+    "text": "Find contacts for Priya",
+    "local": true
+  },
+  {
+    "text": "Look up the phone number for Rahul",
+    "local": true
+  },
+  {
+    "text": "List installed apps",
+    "local": true
+  },
+  {
+    "text": "Show my installed apps",
+    "local": true
+  },
+  {
+    "text": "Read current notifications",
+    "local": true
+  },
+  {
+    "text": "Check my notifications",
+    "local": true
+  },
+  {
+    "text": "Show me my calendar for today",
+    "local": true
+  },
+  {
+    "text": "Read my events today",
+    "local": true
+  },
+  {
+    "text": "List calendars",
+    "local": true
+  },
+  {
+    "text": "Pause my music",
+    "local": true,
+    "expected_intents": [
+      "media"
+    ],
+    "expected_mutations": [
+      "phone_media"
+    ]
+  },
+  {
+    "text": "Resume the playback",
+    "local": true
+  },
+  {
+    "text": "Skip the song",
+    "local": true
+  },
+  {
+    "text": "Next track",
+    "local": true
+  },
+  {
+    "text": "Previous song",
+    "local": true
+  },
+  {
+    "text": "Play music in Spotify",
+    "local": true
+  },
+  {
+    "text": "Increase music volume",
+    "local": true
+  },
+  {
+    "text": "Lower my music volume",
+    "local": true
+  },
+  {
+    "text": "Raise the media volume",
+    "local": true
+  },
+  {
+    "text": "Set volume to 35 percent",
+    "local": true,
+    "expected_intents": [
+      "volume"
+    ],
+    "expected_mutations": [
+      "phone_volume"
+    ]
+  },
+  {
+    "text": "Mute volume",
+    "local": true
+  },
+  {
+    "text": "Unmute music",
+    "local": true
+  },
+  {
+    "text": "Set screen brightness to 60 percent",
+    "local": true,
+    "expected_intents": [
+      "brightness"
+    ],
+    "expected_mutations": [
+      "phone_brightness"
+    ]
+  },
+  {
+    "text": "Turn the torch on",
+    "local": true,
+    "expected_intents": [
+      "flashlight"
+    ],
+    "expected_mutations": [
+      "phone_flashlight"
+    ]
+  },
+  {
+    "text": "Switch off the flashlight",
+    "local": true
+  },
+  {
+    "text": "Show me Wi-Fi settings",
+    "local": true,
+    "expected_intents": [
+      "settings"
+    ],
+    "expected_mutations": [
+      "phone_settings"
+    ]
+  },
+  {
+    "text": "Open Bluetooth settings",
+    "local": true
+  },
+  {
+    "text": "Show me the alarms screen",
+    "local": true
+  },
+  {
+    "text": "Open timers",
+    "local": true
+  },
+  {
+    "text": "What time is it?",
+    "local": true,
+    "expected_intents": [
+      "time"
+    ],
+    "expected_mutations": []
+  },
+  {
+    "text": "What is the current time?",
+    "local": true
+  },
+  {
+    "text": "Tell me the time",
+    "local": true
+  },
+  {
+    "text": "What time is it in London?",
+    "local": true
+  },
+  {
+    "text": "What time is it currently?",
+    "local": true
+  },
+  {
+    "text": "What is the date?",
+    "local": true
+  },
+  {
+    "text": "What day is it?",
+    "local": true
+  },
+  {
+    "text": "What's today's date?",
+    "local": true
+  },
+  {
+    "text": "How much battery is left?",
+    "local": true,
+    "expected_intents": [
+      "device"
+    ],
+    "expected_mutations": []
+  },
+  {
+    "text": "Check my battery level",
+    "local": true
+  },
+  {
+    "text": "Am I online?",
+    "local": true
+  },
+  {
+    "text": "Am I on Wi-Fi?",
+    "local": true
+  },
+  {
+    "text": "Check my network status",
+    "local": true
+  },
+  {
+    "text": "What is the volume?",
+    "local": true
+  },
+  {
+    "text": "How much free storage is available?",
+    "local": true
+  },
+  {
+    "text": "Check my brightness",
+    "local": true
+  },
+  {
+    "text": "What is 12 plus 35?",
+    "local": true,
+    "expected_intents": [
+      "math"
+    ],
+    "expected_mutations": []
+  },
+  {
+    "text": "Calculate 18 divided by 3",
+    "local": true
+  },
+  {
+    "text": "What is 7 times 6?",
+    "local": true
+  },
+  {
+    "text": "Calculate 1 / 0",
+    "local": true
+  },
+  {
+    "text": "Convert 5 miles to kilometers",
+    "local": true,
+    "expected_intents": [
+      "convert"
+    ],
+    "expected_mutations": []
+  },
+  {
+    "text": "What is 70 fahrenheit in celsius?",
+    "local": true
+  },
+  {
+    "text": "Convert 10 kilograms to pounds",
+    "local": true
+  },
+  {
+    "text": "Open Spotify then pause the music",
+    "local": true
+  },
+  {
+    "text": "What time is it and turn on the flashlight",
+    "local": true
+  },
+  {
+    "text": "Text Rahul saying \"Open Spotify and set a timer\"",
+    "local": true
+  },
+  {
+    "text": "Open YouTube and text Rahul saying \"I will be late\"",
+    "local": true
+  },
+  {
+    "text": "Do not open Spotify",
+    "local": false
+  },
+  {
+    "text": "Don't send an SMS to Rahul saying hi",
+    "local": false
+  },
+  {
+    "text": "Never call Priya",
+    "local": false
+  },
+  {
+    "text": "Open Spotify if I get home",
+    "local": false
+  },
+  {
+    "text": "Open Spotify and research the latest news",
+    "local": false
+  },
+  {
+    "text": "Open Spotify and delete my messages",
+    "local": false
+  },
+  {
+    "text": "Open Spotify but do not set a timer",
+    "local": false
+  },
+  {
+    "text": "Set a timer for ten minutes unless I cancel",
+    "local": false
+  },
+  {
+    "text": "Call Rahul or Priya",
+    "local": false
+  },
+  {
+    "text": "Call Rahul and Priya",
+    "local": false
+  },
+  {
+    "text": "Text Rahul and Priya saying hi",
+    "local": false
+  },
+  {
+    "text": "What is the weather?",
+    "local": false
+  },
+  {
+    "text": "Find a restaurant near me",
+    "local": false
+  },
+  {
+    "text": "Find music that fits my mood",
+    "local": false
+  },
+  {
+    "text": "Set an alarm for tomorrow at 7 am",
+    "local": false
+  },
+  {
+    "text": "Cancel all timers",
+    "local": false
+  },
+  {
+    "text": "Set a timer for 200 hours",
+    "local": false
+  },
+  {
+    "text": "Set volume to 150 percent",
+    "local": false
+  },
+  {
+    "text": "Turn on Wi-Fi",
+    "local": false
+  },
+  {
+    "text": "Delete my photos",
+    "local": false
+  },
+  {
+    "text": "Transfer money to Rahul",
+    "local": false
+  },
+  {
+    "text": "What is 2 plus 3 times 4?",
+    "local": false
+  },
+  {
+    "text": "Text Rahul saying hi and call Priya",
+    "local": false
+  },
+  {
+    "text": "Open Spotify and set a timer for ten minutes and tell me the weather",
+    "local": false
+  },
+  {
+    "text": "If I say open Spotify do not open it",
+    "local": false
+  },
+  {
+    "text": "Please explain how to send an SMS to Rahul saying hi",
+    "local": false
+  },
+  {
+    "text": "What time will it rain?",
+    "local": false
+  },
+  {
+    "text": "What time is my flight?",
+    "local": false
+  },
+  {
+    "text": "Call my last caller",
+    "local": false
+  },
+  {
+    "text": "Send my previous message to Rahul",
+    "local": false
+  },
+  {
+    "text": "Remind me after I leave home",
+    "local": false
+  },
+  {
+    "text": "What is the battery health of my laptop?",
+    "local": false
+  },
+  {
+    "text": "Set an alarm every weekday at 7 am",
+    "local": false
+  },
+  {
+    "text": "Go to home",
+    "local": true,
+    "expected_intents": [
+      "navigation"
+    ],
+    "expected_mutations": [
+      "phone_act"
+    ]
+  },
+  {
+    "text": "Back",
+    "local": true
+  },
+  {
+    "text": "Open recents",
+    "local": true
+  },
+  {
+    "text": "Show me the home screen",
+    "local": true
+  },
+  {
+    "text": "Text Rahul saying hi and delete my messages",
+    "local": false
+  },
+  {
+    "text": "Text Rahul saying hi and research the news",
+    "local": false
+  },
+  {
+    "text": "Text Rahul saying hello and goodbye",
+    "local": false
+  },
+  {
+    "text": "Call Priya and then delete my messages",
+    "local": false
+  },
+  {
+    "text": "Resume music on Spotify",
+    "local": false
+  }
+]

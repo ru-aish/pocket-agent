@@ -139,7 +139,7 @@ async function observeReady(host:any,owner:string,args:any,signal?:AbortSignal):
     return last;
   }
 }
-const UI_TOOL_NAMES=new Set(['phone_observe','phone_act','phone_open_app','phone_open_url','phone_clock_screen']);
+const UI_TOOL_NAMES=new Set(['phone_observe','phone_act','phone_open_app','phone_open_url','phone_clock_screen','phone_settings']);
 function firstBatchUiCall(args:any):any {
   return Array.isArray(args?.calls)?args.calls.find((call:any)=>UI_TOOL_NAMES.has(call?.name)):undefined;
 }
@@ -158,7 +158,7 @@ function recordBatchUiState(host:any,owner:string,args:any,result:any):void {
     if(nested?.display_replaced)clearNativeToolUiState(host,owner,'virtual');
     if(!call||nested?.isError)break;
     if(call.name==='phone_open_app')markUiTransition(host,owner,call.args,call.args?.package_name);
-    else if(call.name==='phone_open_url'||call.name==='phone_clock_screen')markUiTransition(host,owner,call.args);
+    else if(call.name==='phone_open_url'||call.name==='phone_clock_screen'||call.name==='phone_settings')markUiTransition(host,owner,call.args);
     else if(call.name==='phone_observe') {
       const state=ownerUiState(host,owner,displayTarget(call.args));
       state.transition=undefined;state.last=observationState(nested);
@@ -209,7 +209,7 @@ export function nativeTools(host:any,owner:string,grant?:readonly string[]):any[
       if(s.name==='phone_batch')recordBatchUiState(host,owner,args,result);
       else if(!result?.isError) {
         if(s.name==='phone_open_app')markUiTransition(host,owner,args,args.package_name);
-        else if(s.name==='phone_open_url'||s.name==='phone_clock_screen')markUiTransition(host,owner,args);
+        else if(s.name==='phone_open_url'||s.name==='phone_clock_screen'||s.name==='phone_settings')markUiTransition(host,owner,args);
       }
       if(needsVirtualUi&&result?.isError&&result.code==='NOT_READY'&&
         /virtual display|no virtual display|shizuku backend|display service/i.test(String(result.message??''))) {

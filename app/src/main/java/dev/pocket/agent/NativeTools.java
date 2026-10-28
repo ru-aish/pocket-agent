@@ -55,6 +55,7 @@ final class NativeTools implements AutoCloseable {
     @Override public synchronized void close() {
         displays.retireOwners(new LinkedHashSet<>(acquiredVirtualOwners),displayGeneration);
         acquiredVirtualOwners.clear();
+        operations.close();
     }
     private synchronized JSONObject screenLease(JSONObject args,String owner) {
         if(args.length()!=1) return Json.failure("INVALID_ARGUMENT","Only action is accepted");
@@ -71,7 +72,7 @@ final class NativeTools implements AutoCloseable {
         return Json.failure("INVALID_ARGUMENT","action must be acquire or release");
     }
     private static boolean uiTool(String name) {
-        return name.equals("phone_observe")||name.equals("phone_act")||name.equals("phone_open_app")||name.equals("phone_open_url")||name.equals("phone_clock_screen");
+        return name.equals("phone_observe")||name.equals("phone_act")||name.equals("phone_open_app")||name.equals("phone_open_url")||name.equals("phone_clock_screen")||name.equals("phone_settings");
     }
     private static String displayTarget(JSONObject args) {return args.optString("display_target","virtual");}
     private static boolean physical(JSONObject args) {return "physical".equals(displayTarget(args));}
@@ -161,7 +162,7 @@ final class NativeTools implements AutoCloseable {
                     "status","partial","results",results,"stopped_after",i,"next_index",i+1,"retry_safe",false,"display_replaced",true);
                 if(name.equals("phone_observe")) {previousObservation=result;transitionPending=false;expectedPackage=null;}
                 else if(name.equals("phone_open_app")) {transitionPending=true;expectedPackage=callArgs.getString("package_name");transitionStartedMs=android.os.SystemClock.elapsedRealtime();}
-                else if(name.equals("phone_open_url")||name.equals("phone_clock_screen")) {transitionPending=true;expectedPackage=null;transitionStartedMs=android.os.SystemClock.elapsedRealtime();}
+                else if(name.equals("phone_open_url")||name.equals("phone_clock_screen")||name.equals("phone_settings")) {transitionPending=true;expectedPackage=null;transitionStartedMs=android.os.SystemClock.elapsedRealtime();}
             }
             return Json.obj("status","completed","results",results);
         } catch(Exception error) {return Json.failure("INVALID_ARGUMENT",error.getMessage()==null?"Invalid batch":error.getMessage());}
@@ -368,11 +369,19 @@ final class NativeTools implements AutoCloseable {
             }catch(Exception denied) {}
         }
         boolean accessibility=displays.accessibilityConnected();
-        return Json.tool(Json.obj("version",BuildConfig.VERSION_NAME,"operation_prefix",operations.prefix(),"operation_nonce_min_length",8,"operation_nonce_max_length",48,"accessibility_connected",accessibility,"notification_listener_connected",PhoneNotifications.connected!=null,"interactive",context.getSystemService(PowerManager.class).isInteractive(),"locked",context.getSystemService(KeyguardManager.class).isKeyguardLocked(),"permissions",permissions,"phone_accounts",accounts,"sms_subscriptions",subscriptions,"media_sessions",media,"call_state",callState,"call_state_note","offhook includes dialing; it is not connection proof","preferred_order",Json.arr("direct_android_api","app_provided_action","semantic_accessibility","screen_gesture"),"physical_display",Json.obj("available",accessibility,"display_id",0,"requires_explicit_target",true,"launch_via_accessibility",true),"virtual_displays",Json.obj("backend",displays.backendStatus(),"active",displays.activeCount(),"maximum",AgentDisplayCoordinator.MAX_DISPLAYS,"requires_shizuku",true)));
+        return Json.tool(Json.obj("version",BuildConfig.VERSION_NAME,"operation_prefix",operations.prefix(),"operation_nonce_min_length",8,"operation_nonce_max_length",48,"accessibility_connected",accessibility,"notification_listener_connected",PhoneNotifications.connected!=null,"interactive",context.getSystemService(PowerManager.class).isInteractive(),"locked",context.getSystemService(KeyguardManager.class).isKeyguardLocked(),"permissions",permissions,"phone_accounts",accounts,"sms_subscriptions",subscriptions,"default_sms_subscription_id",android.telephony.SubscriptionManager.getDefaultSmsSubscriptionId(),"media_sessions",media,"call_state",callState,"call_state_note","offhook includes dialing; it is not connection proof","preferred_order",Json.arr("direct_android_api","app_provided_action","semantic_accessibility","screen_gesture"),"physical_display",Json.obj("available",accessibility,"display_id",0,"requires_explicit_target",true,"launch_via_accessibility",true),"virtual_displays",Json.obj("backend",displays.backendStatus(),"active",displays.activeCount(),"maximum",AgentDisplayCoordinator.MAX_DISPLAYS,"requires_shizuku",true)));
     }
     private JSONObject dispatch(String name,JSONObject a,String owner) throws Exception {
         switch(name) {
             case "phone_capabilities": return capabilities();
+            case "phone_device_info": return QuickDeviceActions.info(context);
+            case "phone_volume": return QuickDeviceActions.volume(context,a);
+            case "phone_brightness": return QuickDeviceActions.brightness(context,a.getInt("percent"));
+            case "phone_flashlight": return QuickDeviceActions.torch(context,a.getBoolean("enabled"));
+            case "phone_settings": {
+                displays.launch(owner,QuickDeviceActions.settingsIntent(a.getString("screen")),true,displayGeneration);
+                return Json.obj("status","requested","screen",a.getString("screen"),"display_target","physical","message","Settings page requested; no toggle was changed");
+            }
             case "phone_observe": return observation(a,owner);
             case "phone_act": {
                 JSONObject s=a.optJSONObject("selector");ControlBackend.Selector selector=s==null?null:new ControlBackend.Selector(string(s,"resource_id"),string(s,"text"),string(s,"description"));

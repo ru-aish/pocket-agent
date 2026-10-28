@@ -866,5 +866,173 @@
     "annotations": {
       "readOnlyHint": false
     }
+  },
+  {
+    "name": "phone_device_info",
+    "description": "Read current battery, charging, active network and validated Internet state, media volume, brightness and available app-volume storage through public Android APIs.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "phone_volume",
+    "description": "Adjust media volume only, with read-back. Does not change ringer, call volume or Do Not Disturb.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "up",
+            "down",
+            "mute",
+            "unmute",
+            "set"
+          ]
+        },
+        "percent": {
+          "type": "integer",
+          "description": "Required only when action is set; omit for up, down, mute and unmute.",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "operation_id": {
+          "type": "string",
+          "minLength": 27,
+          "maxLength": 78,
+          "description": "Current phone_capabilities.operation_prefix + '_' + a unique 8..48 character nonce using only ASCII letters, digits, '_' or '-'. Include owner/generation/action/attempt or a timestamp for uniqueness. A valid suffix example is _type_0001; never reuse the example across actions. Preserve identical IDs/arguments after uncertain results.",
+          "pattern": "^[0-9]{1,12}-[0-9a-f]{16}_[A-Za-z0-9_-]{8,48}$"
+        }
+      },
+      "required": [
+        "action",
+        "operation_id"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "phone_brightness",
+    "description": "Set manual system screen brightness and read it back. Requires user-granted Modify system settings access; disables automatic brightness.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "percent": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "operation_id": {
+          "type": "string",
+          "minLength": 27,
+          "maxLength": 78,
+          "description": "Current phone_capabilities.operation_prefix + '_' + a unique 8..48 character nonce using only ASCII letters, digits, '_' or '-'. Include owner/generation/action/attempt or a timestamp for uniqueness. A valid suffix example is _type_0001; never reuse the example across actions. Preserve identical IDs/arguments after uncertain results.",
+          "pattern": "^[0-9]{1,12}-[0-9a-f]{16}_[A-Za-z0-9_-]{8,48}$"
+        }
+      },
+      "required": [
+        "percent",
+        "operation_id"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "phone_flashlight",
+    "description": "Request rear flashlight state via CameraManager. Requires Camera permission and available hardware; requested is not lasting ownership.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "operation_id": {
+          "type": "string",
+          "minLength": 27,
+          "maxLength": 78,
+          "description": "Current phone_capabilities.operation_prefix + '_' + a unique 8..48 character nonce using only ASCII letters, digits, '_' or '-'. Include owner/generation/action/attempt or a timestamp for uniqueness. A valid suffix example is _type_0001; never reuse the example across actions. Preserve identical IDs/arguments after uncertain results.",
+          "pattern": "^[0-9]{1,12}-[0-9a-f]{16}_[A-Za-z0-9_-]{8,48}$"
+        }
+      },
+      "required": [
+        "enabled",
+        "operation_id"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "phone_settings",
+    "description": "Open a named Android settings page on the visible screen at the user request. Does not change Wi-Fi, Bluetooth, location or airplane-mode toggles.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "screen": {
+          "type": "string",
+          "enum": [
+            "wifi",
+            "bluetooth",
+            "display",
+            "sound",
+            "location",
+            "airplane",
+            "battery"
+          ]
+        },
+        "operation_id": {
+          "type": "string",
+          "minLength": 27,
+          "maxLength": 78,
+          "description": "Current phone_capabilities.operation_prefix + '_' + a unique 8..48 character nonce using only ASCII letters, digits, '_' or '-'. Include owner/generation/action/attempt or a timestamp for uniqueness. A valid suffix example is _type_0001; never reuse the example across actions. Preserve identical IDs/arguments after uncertain results.",
+          "pattern": "^[0-9]{1,12}-[0-9a-f]{16}_[A-Za-z0-9_-]{8,48}$"
+        },
+        "display_target": {
+          "type": "string",
+          "enum": [
+            "physical"
+          ],
+          "description": "Explicit visible-device target, only at the user's request. Requires Accessibility; no private display is acquired."
+        }
+      },
+      "required": [
+        "screen",
+        "operation_id",
+        "display_target"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
   }
 ]

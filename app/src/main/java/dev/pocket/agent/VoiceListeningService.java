@@ -44,6 +44,7 @@ public final class VoiceListeningService extends Service implements AgentService
     private final ArrayDeque<VoiceAnnouncement> pendingAnnouncements = new ArrayDeque<>();
     private final LinkedHashSet<String> acceptedIds = new LinkedHashSet<>();
     private DeepgramVoice voice;
+    private QuickVoiceCommands quickCommands;
     private AndroidShortSpeechRecognizer shortSpeech;
     private AndroidDefaultSpeechRecognizer defaultSpeech;
     private HybridTranscriptArbiter transcriptArbiter;
@@ -167,6 +168,7 @@ public final class VoiceListeningService extends Service implements AgentService
             stopSelf(); return false;
         }
         sttMode = VoiceSttSettings.mode(this);
+        if (QuickVoiceCommands.enabled(this)) quickCommands = new QuickVoiceCommands(this);
         started = true;
         AgentService.observe(this);
         if (!AgentService.isRunning())
@@ -589,7 +591,7 @@ public final class VoiceListeningService extends Service implements AgentService
 
     private void resetIdle() {
         main.removeCallbacks(idleStop);
-        main.postDelayed(idleStop, IDLE_TIMEOUT_MS);
+        main.postDelayed(idleStop, quickCommands != null && quickCommands.awaiting() ? 30000 : IDLE_TIMEOUT_MS);
     }
 
     private void speechStarted() {
@@ -597,6 +599,7 @@ public final class VoiceListeningService extends Service implements AgentService
         userSpeaking = true;
         main.removeCallbacks(idleStop);
         if (responding) {
+            if (quickCommands != null) quickCommands.cancelCurrent();
             String interruptedTurn = activeTurn;
             responding = false;
             activeTurn = null;
@@ -769,14 +772,34 @@ public final class VoiceListeningService extends Service implements AgentService
         showStatus(sttMode.usesDirectAndroidRecognizer() && !androidBargeInListening
             ? "Thinking" : "Thinking · listening for interruption");
         try {
-            command(new JSONObject().put("action", "send")
-                .put("voiceSessionId", activeTurn).put("text", text));
+            final String utterance = text, turn = activeTurn;
+            if (quickCommands == null) sendToAgent(utterance, turn);
+            else quickCommands.submit(utterance, result -> {
+                if (!started || !responding || !turn.equals(activeTurn)) return;
+                if (result.fallback()) { sendToAgent(utterance, turn); return; }
+                if (!result.speech().isEmpty()) try {
+                    command(Json.obj("action", "record_local_voice", "text", utterance, "response", result.speech()));
+                } catch (RuntimeException unavailable) { Log.w("PocketQuickCommand", "Could not record local exchange in chat"); }
+                firstTokenAt = SystemClock.elapsedRealtime();
+                voice.appendReply(result.speech());
+                voice.finishReply();
+                showStatus(result.awaiting() ? "Waiting for your answer" : "Speaking · listening for interruption");
+            });
         } catch (Exception failure) {
             responding = false;
             activeTurn = null;
             voice.interruptReply();
             showStatus("Unable to submit voice request");
             afterPlayback();
+        }
+    }
+
+    private void sendToAgent(String text, String turn) {
+        try { command(new JSONObject().put("action", "send").put("voiceSessionId", turn).put("text", text)); }
+        catch (Exception failure) {
+            responding = false; activeTurn = null;
+            if (voice != null) voice.interruptReply();
+            showStatus("Unable to submit voice request"); afterPlayback();
         }
     }
 
@@ -818,6 +841,7 @@ public final class VoiceListeningService extends Service implements AgentService
         cancelSystemResultFallback();
         cancelDeepgramDuplicateFallback();
         AgentService.unobserve(this);
+        if (quickCommands != null) { quickCommands.close(); quickCommands = null; }
         pendingAnnouncements.clear();
         acceptedIds.clear();
         if (voice != null) voice.setPcmObserver(null);

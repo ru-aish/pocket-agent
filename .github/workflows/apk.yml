@@ -4,6 +4,16 @@ on:
     branches: [main, 'feat/**', 'fix/**']
   workflow_dispatch:
     inputs:
+      clone_downloaded_apk:
+        description: Clone the verified downloaded development APK as a separate app
+        required: false
+        default: false
+        type: boolean
+      quick_test_profile:
+        description: Build a separate Pocket Agent Quick Test app without replacing the main app
+        required: false
+        default: false
+        type: boolean
       isolated_history:
         description: Build an isolated debug APK pair for USB history validation
         required: false
@@ -12,14 +22,14 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: apk-${{ github.ref }}
+  group: apk-${{ github.ref }}-${{ (inputs.quick_test_profile || inputs.clone_downloaded_apk) && 'quick-test' || 'standard' }}
   cancel-in-progress: true
 jobs:
   history-device:
     if: inputs.isolated_history == true
     uses: ./.github/workflows/history-device.yml
   build:
-    if: inputs.isolated_history != true
+    if: inputs.isolated_history != true && inputs.quick_test_profile != true && inputs.clone_downloaded_apk != true
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     env:
@@ -44,6 +54,8 @@ jobs:
         run: |
           python3 -m pip install aiohttp==3.13.5
           python3 -m unittest discover -s scripts -p 'test_*.py' -v
+      - name: Evaluate shipped local command model and dialogue engine
+        run: python3 scripts/evaluate_quick_commands.py --report artifacts/quick-command-evaluation.json
       - uses: android-actions/setup-android@v4
       - run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0' 'ndk;27.2.12479018'
       - name: Restore private signing material
@@ -81,7 +93,7 @@ jobs:
             cp app/build/outputs/apk/release/app-x86_64-release.apk emulator-diagnostics/Pocket-Agent-x86_64.apk
             cp app/build/outputs/apk/androidTest/release/*.apk emulator-diagnostics/Pocket-Agent-tests.apk
             cp fixture/build/outputs/apk/debug/*.apk emulator-diagnostics/Pocket-Agent-fixture.apk
-            python3 scripts/emulator_test.py --serial "$(adb get-serialno)" --artifacts emulator-diagnostics --fresh --diagnostics --class AutonomyDeviceTest --class VoicePipelineDeviceTest --class VoiceAssistantDeviceTest --case 'LifecycleDeviceTest#mainThreadPromptAndDebugControlsWorkOnDevice' --case 'RuntimeDeviceTest#physicalDisplayCanLaunchObserveAndActWithoutVirtualLease'
+            python3 scripts/emulator_test.py --serial "$(adb get-serialno)" --artifacts emulator-diagnostics --fresh --diagnostics --class AutonomyDeviceTest --class VoicePipelineDeviceTest --class VoiceAssistantDeviceTest --class QuickCommandDeviceTest --case 'LifecycleDeviceTest#mainThreadPromptAndDebugControlsWorkOnDevice' --case 'RuntimeDeviceTest#physicalDisplayCanLaunchObserveAndActWithoutVirtualLease'
             ./gradlew --no-daemon :app:connectedReleaseAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=dev.pocket.agent.CodexAuthDeviceTest
             adb uninstall dev.pocket.agent || true
             adb uninstall dev.pocket.agent.test || true
@@ -171,6 +183,130 @@ jobs:
             app/build/reports/lint-results-release.*
             app/build/outputs/mapping/**/missing_rules.txt
           if-no-files-found: ignore
+      - name: Remove signing material
+        if: always()
+        run: rm -f "$APK_KEYSTORE"
+
+  quick-test:
+    if: inputs.quick_test_profile == true && inputs.isolated_history != true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      APK_KEYSTORE: /tmp/pocket-agent-signing.jks
+      APK_STORE_PASSWORD: ${{ secrets.APK_STORE_PASSWORD }}
+      APK_KEY_PASSWORD: ${{ secrets.APK_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22.22.2'
+          cache: npm
+          cache-dependency-path: runtime/package-lock.json
+      - name: Build runtime
+        working-directory: runtime
+        run: npm ci && npm run build
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v4
+      - run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0' 'ndk;27.2.12479018'
+      - name: Restore private signing material
+        env:
+          KEYSTORE_BASE64: ${{ secrets.APK_KEYSTORE_BASE64 }}
+        run: |
+          python3 - <<'PYTHON'
+          import base64, os
+          from pathlib import Path
+          path = Path(os.environ['APK_KEYSTORE'])
+          path.write_bytes(base64.b64decode(os.environ['KEYSTORE_BASE64'], validate=True))
+          path.chmod(0o600)
+          PYTHON
+      - uses: gradle/actions/setup-gradle@v5
+      - name: Build separate test app
+        run: ./gradlew --no-daemon -PquickCommandTestProfile :app:assembleDevelopment
+      - name: Verify isolated package and collect APK
+        run: |
+          mkdir -p quick-test-apk
+          apk=app/build/outputs/apk/development/app-arm64-v8a-development.apk
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$apk" > quick-test-apk/package.txt
+          grep -q "package: name='dev.pocket.agent.quicktest'" quick-test-apk/package.txt
+          grep -q "application-label:'Pocket Agent Quick Test'" quick-test-apk/package.txt
+          cp "$apk" quick-test-apk/Pocket-Agent-Quick-Test-arm64.apk
+          git rev-parse HEAD > quick-test-apk/source-commit.txt
+          (cd quick-test-apk && sha256sum *.apk > SHA256SUMS.txt)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pocket-agent-quick-test
+          path: quick-test-apk/
+          retention-days: 30
+      - name: Remove signing material
+        if: always()
+        run: rm -f "$APK_KEYSTORE"
+
+  clone-downloaded:
+    permissions:
+      contents: read
+      actions: read
+    if: inputs.clone_downloaded_apk == true && inputs.quick_test_profile != true && inputs.isolated_history != true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      APK_KEYSTORE: /tmp/pocket-agent-signing.jks
+      APK_STORE_PASSWORD: ${{ secrets.APK_STORE_PASSWORD }}
+      APK_KEY_PASSWORD: ${{ secrets.APK_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v4
+      - run: sdkmanager 'build-tools;36.0.0'
+      - uses: actions/download-artifact@v4
+        with:
+          name: pocket-agent-development
+          run-id: 40651371495
+          github-token: ${{ github.token }}
+          path: downloaded
+      - name: Verify exact downloaded APK and APKTool
+        run: |
+          echo '6387211568f3fcc24cfca1cbe8138f8fff5e54fd2e60448ed1d4c8ed9c261bfe  downloaded/Pocket-Agent-development-arm64.apk' | sha256sum -c -
+          curl --fail --location --output /tmp/apktool.jar https://github.com/iBotPeaches/Apktool/releases/download/v3.0.3/apktool_3.0.3.jar
+          echo 'dbf930b076c6b9be08d57c449cacefc3bdd6b71ebd59b3066fc0e1f5b14f9423  /tmp/apktool.jar' | sha256sum -c -
+      - name: Clone downloaded APK without rebuilding project sources
+        run: |
+          java -jar /tmp/apktool.jar d downloaded/Pocket-Agent-development-arm64.apk -o decoded
+          python3 scripts/clone_downloaded_apk.py decoded
+          java -jar /tmp/apktool.jar b decoded -o /tmp/clone-unsigned.apk
+      - name: Restore private signing material
+        env:
+          KEYSTORE_BASE64: ${{ secrets.APK_KEYSTORE_BASE64 }}
+        run: |
+          python3 - <<'PYTHON'
+          import base64, os
+          from pathlib import Path
+          p = Path(os.environ['APK_KEYSTORE'])
+          p.write_bytes(base64.b64decode(os.environ['KEYSTORE_BASE64'], validate=True))
+          p.chmod(0o600)
+          PYTHON
+      - name: Align, sign and verify isolated APK
+        run: |
+          mkdir -p clone-apk
+          tools="$ANDROID_HOME/build-tools/36.0.0"
+          "$tools/zipalign" -p -f 4 /tmp/clone-unsigned.apk /tmp/clone-aligned.apk
+          "$tools/apksigner" sign --ks "$APK_KEYSTORE" --ks-key-alias pocket-agent --ks-pass env:APK_STORE_PASSWORD --key-pass env:APK_KEY_PASSWORD --out clone-apk/Pocket-Agent-Quick-Test-arm64.apk /tmp/clone-aligned.apk
+          "$tools/apksigner" verify --verbose clone-apk/Pocket-Agent-Quick-Test-arm64.apk
+          "$tools/aapt" dump badging clone-apk/Pocket-Agent-Quick-Test-arm64.apk > clone-apk/package.txt
+          grep -q "package: name='dev.pocket.agent.quicktest'" clone-apk/package.txt
+          grep -q "application-label:'Pocket Agent Quick Test'" clone-apk/package.txt
+          echo 6387211568f3fcc24cfca1cbe8138f8fff5e54fd2e60448ed1d4c8ed9c261bfe > clone-apk/original-apk-sha256.txt
+          (cd clone-apk && sha256sum *.apk > SHA256SUMS.txt)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pocket-agent-downloaded-clone
+          path: clone-apk/
+          retention-days: 30
       - name: Remove signing material
         if: always()
         run: rm -f "$APK_KEYSTORE"
