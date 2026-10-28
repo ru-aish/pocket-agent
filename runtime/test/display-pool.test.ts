@@ -260,6 +260,76 @@ test('a Shizuku service death transparently reacquires one fresh lease for the s
   assert.equal(bridge.calls.filter(c=>c.name==='phone_screen'&&c.args.action==='acquire').length,2);
 });
 
+test('observation recovers when the native replacement encounters Shizuku still restarting',async()=>{
+  class RestartBridge extends Bridge {
+    loseNext=false;
+    failuresRemaining=0;
+    override call(method:string,json:string):string {
+      const args=JSON.parse(json);
+      if(method==='tool'&&args.name==='phone_observe'&&this.loseNext) {
+        this.loseNext=false;this.failuresRemaining=2;
+        return JSON.stringify({ok:true,result:{isError:true,code:'NOT_READY',message:'Virtual display backend shizuku_unavailable; start Shizuku and authorize Pocket Agent in its UI'}});
+      }
+      if(method==='tool'&&args.name==='phone_screen'&&args.args.action==='acquire'&&this.failuresRemaining-->0) {
+        this.calls.push(args);
+        return JSON.stringify({ok:true,result:{isError:true,code:'NOT_READY',message:'Shizuku display UserService startup is still pending; retry after startup completes.'}});
+      }
+      return super.call(method,json);
+    }
+  }
+  const bridge=new RestartBridge(),app=new PocketRuntime(bridge);
+  const observe=()=>nativeTools(app,'worker').find(t=>t.name==='phone_observe')!.execute('t',{});
+  assert.equal((await observe()).isError,false);
+  bridge.loseNext=true;
+  const recovered=await observe();
+  assert.equal(recovered.isError,false);
+  assert.equal(recovered.details.display_replaced,true,'tell the model the old private app state was discarded');
+  assert.equal(app.displayPool.active,1);
+  assert.equal(bridge.calls.filter(c=>c.name==='phone_screen'&&c.args.action==='acquire').length,4);
+  app.releaseScreen('worker');
+});
+
+test('an acquisition waiting for the watchdog keeps Android active and release prevents late dispatch',async()=>{
+  class RestartBridge extends Bridge {
+    attempts=0;
+    override call(method:string,json:string):string {
+      const args=JSON.parse(json);
+      if(method==='tool'&&args.name==='phone_screen'&&args.args.action==='acquire') {
+        this.attempts++;
+        return JSON.stringify({ok:true,result:{isError:true,code:'NOT_READY',message:'Virtual display backend shizuku_unavailable'}});
+      }
+      return super.call(method,json);
+    }
+  }
+  const bridge=new RestartBridge(),app=new PocketRuntime(bridge);
+  const pending=app.ensureDisplay('worker');
+  const rejected=assert.rejects(pending,/cancelled/);
+  await until(()=>bridge.attempts===1);
+  assert.equal(app.state().active,true);
+  app.releaseScreen('worker');
+  await rejected;
+  assert.equal(bridge.attempts,1,'released work must not acquire a fresh display after the wait');
+  assert.equal(app.displayPool.active,0);
+  assert.equal(app.state().active,false);
+});
+
+test('a mutation interrupted by backend death is reported once, without automatic replay',async()=>{
+  class MutationBridge extends Bridge {
+    mutations=0;
+    override call(method:string,json:string):string {
+      const args=JSON.parse(json);
+      if(method==='tool'&&args.name==='phone_open_app') {
+        this.mutations++;
+        return JSON.stringify({ok:true,result:{isError:true,code:'NOT_READY',message:'Virtual display backend disconnected'}});
+      }
+      return super.call(method,json);
+    }
+  }
+  const bridge=new MutationBridge(),app=new PocketRuntime(bridge);
+  const result=await nativeTools(app,'worker').find(t=>t.name==='phone_open_app')!.execute('t',{package_name:'fixture',operation_id:'unchanged'});
+  assert.equal(result.isError,true);assert.equal(bridge.mutations,1);assert.equal(app.displayPool.active,0);
+});
+
 test('host-managed release clears pending launch readiness before the next lease',async()=>{
   class TransitionBridge extends Bridge {
     packageName='old.app';

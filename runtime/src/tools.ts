@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import schemas from '../../app/src/main/assets/tools.json';
 import { SubagentParams, parseSubagentInvocation } from '../vendor/pi9/schema.js';
 import { REASONING_EFFORTS } from './provider.js';
+import { displayBackendRestarting } from './display-recovery.js';
 
 // Keep upstream parsing/contracts intact; advertise only mobile-supported spawn
 // inputs. Agent selection still determines the recursively inherited tool grant.
@@ -78,7 +79,7 @@ function transitionRetryable(result:any):boolean {
   return result.code==='NOT_READY'&&/active accessibility window|screen transition|virtual display|shizuku backend|display service/i.test(String(result.message??''));
 }
 function backendLeaseLost(result:any):boolean {
-  return result?.isError&&result.code==='NOT_READY'&&/shizuku backend|display service disconnected|virtual display backend disconnected|no virtual display/i.test(String(result.message??''));
+  return displayBackendRestarting(result)||(result?.isError&&result.code==='NOT_READY'&&/shizuku backend|display service disconnected|virtual display backend disconnected|no virtual display/i.test(String(result.message??'')));
 }
 function observationBackendTimedOut(result:any):boolean {
   return result?.isError&&result.code==='RESULT_UNKNOWN'&&/timed out/i.test(String(result.message??''));

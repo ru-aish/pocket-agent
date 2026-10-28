@@ -6,6 +6,7 @@ import { SubagentRuntime } from '../vendor/pi9/runtime.js';
 import { completedGeneration,errorGeneration,interruptedGeneration,generationKey } from '../vendor/pi9/conversation.js';
 import { MobileSession } from './session.js';
 import { DisplayPool } from './display-pool.js';
+import { acquireDisplayWithRecovery } from './display-recovery.js';
 import { nativeTools,subagentTool,speakToUserTool,clearNativeToolUiState } from './tools.js';
 import {memoryTools,recallBlock,MEMORY_GUIDANCE,MEMORY_TOOL_NAMES} from './memory.js';
 import { messageText } from './scripted.js';
@@ -300,15 +301,19 @@ export class PocketRuntime {
         return {isError:true,code:'NOT_READY',message:'Previous virtual display cleanup is pending'};
       if(this.nativeDisplays.has(owner))return {status:'acquired'};
       try {
-        const result=this.call('tool',{name:'phone_screen',args:{action:'acquire'},owner});
+        const result=await acquireDisplayWithRecovery(()=>{
+          if(!this.displayPool.has(owner)||this.shuttingDown)throw new Error('Display request cancelled');
+          return this.call('tool',{name:'phone_screen',args:{action:'acquire'},owner});
+        },signal,()=>this.emit({type:'log',owner,message:'Waiting for Shizuku to restart before reacquiring the virtual display'}));
         if(result?.isError){this.releaseScreen(owner);return result;}
         this.nativeDisplays.add(owner);
-        if(signal?.aborted){this.releaseScreen(owner);throw new Error('Display request cancelled');}
+        if(signal?.aborted||!this.displayPool.has(owner)||this.shuttingDown){this.releaseScreen(owner);throw new Error('Display request cancelled');}
         return result;
       }catch(e){this.releaseScreen(owner);throw e;}
     })();
     this.pendingDisplays.set(owner,request);
-    try{return await request;}finally{this.pendingDisplays.delete(owner);}
+    this.publish();
+    try{return await request;}finally{this.pendingDisplays.delete(owner);this.publish();}
   }
   private retryScreenRelease(owner:string):void {
     // One queued timer per retained lease, bounded by the pool's three owners.
@@ -786,7 +791,7 @@ export class PocketRuntime {
   }
   state():any {
     const tasks=this.runtime.listConversations().map(c=>{const g=c.generations.at(-1)!;return {...c,generation:g.generation,status:g.status.kind==='done'?({error:'failed',aborted:'cancelled',skipped:'cancelled'} as any)[g.status.outcome]??g.status.outcome:g.status.kind,output:g.status.kind==='done'?g.status.output:undefined};});
-    const otherActive=this.discoveringModels||hasPendingCodexRefresh(this.credentials)||this.observing||this.busy||tasks.some(t=>t.currentGeneration||t.isStopping)||(!this.mainPaused&&this.inbox.length>0)||Boolean(this.pendingSave);
+    const otherActive=this.pendingDisplays.size>0||this.discoveringModels||hasPendingCodexRefresh(this.credentials)||this.observing||this.busy||tasks.some(t=>t.currentGeneration||t.isStopping)||(!this.mainPaused&&this.inbox.length>0)||Boolean(this.pendingSave);
     const cleanupOnly=this.releaseRetries.size>0&&!otherActive;
     const cleanupWakeMs=cleanupOnly?Math.min(...[...this.releaseRetries.values()].map(retry=>Math.max(1,(retry.dueAt??Date.now()+200)-Date.now()))):0;
     return {messages:textMessages(this.main.messages,this.sanitize),mainThreadId:this.mainThreadId,tasks,busy:this.busy,lastError:this.lastError,active:this.releaseRetries.size>0||otherActive,cleanupOnly,cleanupWakeMs,mainPaused:this.mainPaused,mainInterrupted:this.mainInterrupted,provider:{...this.config},mainTurns:this.mainTurns,personalInstructions:this.personalInstructions,
