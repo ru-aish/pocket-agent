@@ -275,6 +275,7 @@ final class NativeTools implements AutoCloseable {
         if (name.equals("phone_screen")) return screenLease(args,owner);
         try {
             JSONObject spec=definition(name);validate(args,spec.getJSONObject("inputSchema"));
+            if(name.equals("phone_shell"))return displays.terminal(args,owner,displayGeneration);
             if(!spec.getJSONObject("annotations").getBoolean("readOnlyHint")) return operations.execute(args.getString("operation_id"),name,args,()->dispatch(name,args,owner));
             return dispatch(name,args,owner);
         } catch(ControlException e) {return Json.failure(e.code.name(),e.getMessage());}
@@ -368,7 +369,7 @@ final class NativeTools implements AutoCloseable {
             }catch(Exception denied) {}
         }
         boolean accessibility=displays.accessibilityConnected();
-        return Json.tool(Json.obj("version",BuildConfig.VERSION_NAME,"operation_prefix",operations.prefix(),"operation_nonce_min_length",8,"operation_nonce_max_length",48,"accessibility_connected",accessibility,"notification_listener_connected",PhoneNotifications.connected!=null,"interactive",context.getSystemService(PowerManager.class).isInteractive(),"locked",context.getSystemService(KeyguardManager.class).isKeyguardLocked(),"permissions",permissions,"phone_accounts",accounts,"sms_subscriptions",subscriptions,"media_sessions",media,"call_state",callState,"call_state_note","offhook includes dialing; it is not connection proof","preferred_order",Json.arr("direct_android_api","app_provided_action","semantic_accessibility","screen_gesture"),"physical_display",Json.obj("available",accessibility,"display_id",0,"requires_explicit_target",true,"launch_via_accessibility",true),"virtual_displays",displays.capabilities()));
+        return Json.tool(Json.obj("version",BuildConfig.VERSION_NAME,"operation_prefix",operations.prefix(),"operation_nonce_min_length",8,"operation_nonce_max_length",48,"accessibility_connected",accessibility,"notification_listener_connected",PhoneNotifications.connected!=null,"interactive",context.getSystemService(PowerManager.class).isInteractive(),"locked",context.getSystemService(KeyguardManager.class).isKeyguardLocked(),"permissions",permissions,"phone_accounts",accounts,"sms_subscriptions",subscriptions,"media_sessions",media,"call_state",callState,"call_state_note","offhook includes dialing; it is not connection proof","preferred_order",Json.arr("direct_android_api","app_provided_action","semantic_accessibility","screen_gesture"),"physical_display",Json.obj("available",accessibility,"display_id",0,"requires_explicit_target",true,"launch_via_accessibility",true),"shell",Json.obj("tool","phone_shell","backend",displays.backendStatus(),"requires_shizuku",true,"requires_pc",false,"command_allowlist",false,"available_to_all_agents",true),"virtual_displays",displays.capabilities()));
     }
     private JSONObject dispatch(String name,JSONObject a,String owner) throws Exception {
         switch(name) {

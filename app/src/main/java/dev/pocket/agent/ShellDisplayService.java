@@ -37,6 +37,7 @@ public final class ShellDisplayService extends IDisplayShell.Stub {
     private final Map<Integer,OwnedDisplay> displays=new LinkedHashMap<>();
     private final DisplayRestorationReservations reservations=new DisplayRestorationReservations();
     private HandlerThread frameThread;
+    private final ShellTerminal terminal=new ShellTerminal(new java.io.File("/data/local/tmp/pocket-agent-shell"));
 
     private static final class DisplayWakeLock implements AutoCloseable {
         final Object power;
@@ -470,6 +471,32 @@ public final class ShellDisplayService extends IDisplayShell.Stub {
     }
     @Override public synchronized String health() {
         return "uid="+Process.myUid()+";display_count="+displays.size()+";android="+Build.VERSION.SDK_INT;
+    }
+    @Override public String terminal(String request,String owner,int displayId) {
+        try {
+            org.json.JSONObject args=new org.json.JSONObject(request),result;
+            String action=args.getString("action");
+            if(action.equals("context"))result=terminal.context(owner);
+            else if(action.equals("exec"))result=terminal.execute(args,owner,displayId<0?null:displayId);
+            else if(action.equals("poll"))result=terminal.poll(args.getString("session_id"),args.optLong("offset",0));
+            else if(action.equals("stop"))result=terminal.stop(args.getString("session_id"),args.optLong("offset",0));
+            else if(action.equals("image"))result=ShellImages.read(args.getString("path"),args.optInt("max_image_dimension",1280));
+            else if(action.equals("capture")) {
+                int target=args.optInt("display_id",displayId);OwnedDisplay active;
+                synchronized(this){active=displays.get(target);}
+                if(active==null)throw new IllegalArgumentException("No frame reader for this display. Acquire a private display or use shell screencap plus action=image for the physical screen.");
+                synchronized(active) {
+                    if(active.latestFrame==null)throw new IllegalStateException("No display frame yet; wait for app rendering and capture again");
+                    result=ShellImages.frame(active.latestFrame,args.optInt("max_image_dimension",1280));
+                }
+                result.put("display_id",target);
+            } else throw new IllegalArgumentException("Unsupported shell action");
+            result.put("uid",Process.myUid());result.put("assigned_display_id",displayId<0?org.json.JSONObject.NULL:displayId);
+            return result.toString();
+        } catch(Exception error) {
+            return Json.failure(error instanceof SecurityException?"PERMISSION_REQUIRED":error instanceof IllegalArgumentException||error instanceof org.json.JSONException?"INVALID_ARGUMENT":"SHELL_ERROR",
+                error.getMessage()==null?error.getClass().getSimpleName():error.getMessage()).toString();
+        }
     }
     @Override public synchronized void destroy() {
         // A concurrent removal owns the task-reconciliation obligation. Do not
