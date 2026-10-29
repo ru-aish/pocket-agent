@@ -72,6 +72,7 @@ public final class MainActivity extends Activity implements AgentService.Observe
     private int pendingPickerRequest = -1;
     private Future<?> pendingImport;
     private String pendingVoiceInvitation;
+    private DisplayViewer displayViewer;
     @Override public void onCreate(Bundle saved) {
         super.onCreate(saved); store = new StateStore(this);
         LinearLayout root = column(); root.setPadding(dp(14), dp(12), dp(14), dp(12));
@@ -86,6 +87,8 @@ public final class MainActivity extends Activity implements AgentService.Observe
         toolbar.addView(button("Activity", this::autonomyActivity));
         toolbar.addView(button("Settings", this::settings)); root.addView(toolbar);
         status = text("Stopped · Send starts the runtime"); root.addView(status);
+        displayViewer = new DisplayViewer(this, () -> state);
+        root.addView(button("Displays", displayViewer::show));
         LinearLayout historyActions = row();
         historyActions.addView(button("New main thread", this::newMainThread), new LinearLayout.LayoutParams(0, -2, 1));
         historyActions.addView(button("Copy history", this::copyHistory), new LinearLayout.LayoutParams(0, -2, 1));
@@ -171,7 +174,7 @@ public final class MainActivity extends Activity implements AgentService.Observe
             }
         }
     }
-    @Override protected void onStop() { AgentService.unobserve(this); SubscriptionVoiceService.unobserve(this); super.onStop(); }
+    @Override protected void onStop() { displayViewer.dismiss(); AgentService.unobserve(this); SubscriptionVoiceService.unobserve(this); super.onStop(); }
     @Override public void onVoiceState(boolean active, String message) {
         voiceConversation.setText(active ? "Disconnect Codex voice" : "Start Codex voice");
         voiceConversationStatus.setText(message);
@@ -242,6 +245,7 @@ public final class MainActivity extends Activity implements AgentService.Observe
     }
     @Override protected void onDestroy() {
         invalidateAccountOperations();
+        displayViewer.close();
         accountFiles.shutdownNow(); historyQueries.shutdownNow(); store.close(); super.onDestroy();
     }
     @Override public void onAgentEvent(JSONObject event) {

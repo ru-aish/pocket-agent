@@ -12,6 +12,7 @@ import android.media.Image;
 import android.media.ImageReader;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.Binder;
 import android.view.Display;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.platform.app.InstrumentationRegistry;
@@ -48,6 +49,7 @@ public class PhoneTargetDeviceTest {
         ImageReader reader;
         VirtualDisplay display;
         AccessibilityProxyBackend screen;
+        final java.util.concurrent.atomic.AtomicInteger frameCount=new java.util.concurrent.atomic.AtomicInteger();
         Chooser(String mode) throws Exception {
             try {
                 DeviceTestAccess.ensureAccessibility();
@@ -55,7 +57,7 @@ public class PhoneTargetDeviceTest {
                     "android.permission.ADD_ALWAYS_UNLOCKED_DISPLAY");
                 try {
                     reader=ImageReader.newInstance(720,1280,PixelFormat.RGBA_8888,2);
-                    reader.setOnImageAvailableListener(r->{try(Image frame=r.acquireLatestImage()) {}},new Handler(Looper.getMainLooper()));
+                    reader.setOnImageAvailableListener(r->{try(Image frame=r.acquireLatestImage()) {if(frame!=null)frameCount.incrementAndGet();}},new Handler(Looper.getMainLooper()));
                     display=context.getSystemService(DisplayManager.class).createVirtualDisplay("PocketChooserTest",720,1280,320,reader.getSurface(),
                         1|8|64|1024|2048|4096|16384|32768);
                 } finally {automation.dropShellPermissionIdentity();}
@@ -147,6 +149,42 @@ public class PhoneTargetDeviceTest {
         for(android.view.Display item:context.getSystemService(DisplayManager.class).getDisplays())
             if("PocketChooserTest".equals(item.getName()))count++;
         return count;
+    }
+
+    @Test public void previewShowsFramesAndRestoresTheExistingDisplay() throws Exception {
+        try(Chooser chooser=new Chooser("editable")) {
+            int id=chooser.display.getDisplay().getDisplayId();
+            DisplayManager manager=context.getSystemService(DisplayManager.class);
+            int initialCount=chooserDisplayCount();
+            android.graphics.Point initialSize=new android.graphics.Point();
+            manager.getDisplay(id).getRealSize(initialSize);
+            try(ImageReader viewer=ImageReader.newInstance(720,1280,PixelFormat.RGBA_8888,2);
+                DisplayPreviewSurface preview=new DisplayPreviewSurface(chooser.display::setSurface,chooser.reader.getSurface())) {
+                preview.show(viewer.getSurface(),new Binder());
+                boolean received=false;
+                long deadline=android.os.SystemClock.elapsedRealtime()+6000;
+                while(android.os.SystemClock.elapsedRealtime()<deadline) {
+                    try(Image frame=viewer.acquireLatestImage()) {
+                        if(frame!=null) {assertEquals(720,frame.getWidth());assertEquals(1280,frame.getHeight());received=true;break;}
+                    }
+                    Thread.sleep(50);
+                }
+                assertTrue("Preview should receive compositor frames",received);
+                assertEquals("Viewing must not allocate another display",initialCount,chooserDisplayCount());
+                android.graphics.Point viewedSize=new android.graphics.Point();
+                manager.getDisplay(id).getRealSize(viewedSize);
+                assertEquals("Viewing must preserve display dimensions",initialSize,viewedSize);
+                int backgroundFrames=chooser.frameCount.get();
+                preview.detach();
+                deadline=android.os.SystemClock.elapsedRealtime()+6000;
+                while(chooser.frameCount.get()<=backgroundFrames&&android.os.SystemClock.elapsedRealtime()<deadline)Thread.sleep(50);
+                assertTrue("Background surface must receive frames again",chooser.frameCount.get()>backgroundFrames);
+                // The exact same worker activity and display remain usable afterward.
+                assertNotNull(manager.getDisplay(id));
+                chooser.observed("POCKET_AGENT_FIXTURE");
+                assertEquals(initialCount,chooserDisplayCount());
+            }
+        }
     }
 
     @Test public void physicalBackendStaysScopedWhileVirtualDisplayExists() throws Exception {

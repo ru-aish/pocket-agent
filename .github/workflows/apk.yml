@@ -90,7 +90,7 @@ jobs:
             cp app/build/outputs/apk/release/app-x86_64-release.apk emulator-diagnostics/Pocket-Agent-x86_64.apk
             cp app/build/outputs/apk/androidTest/release/*.apk emulator-diagnostics/Pocket-Agent-tests.apk
             cp fixture/build/outputs/apk/debug/*.apk emulator-diagnostics/Pocket-Agent-fixture.apk
-            python3 scripts/emulator_test.py --serial "$(adb get-serialno)" --artifacts emulator-diagnostics --fresh --diagnostics --class VoiceInvitationDeviceTest --class AutonomyDeviceTest --class VoicePipelineDeviceTest --class VoiceAssistantDeviceTest --class SubscriptionVoiceActivationDeviceTest --class SubscriptionVoiceContextDeviceTest --case 'LifecycleDeviceTest#mainThreadPromptAndDebugControlsWorkOnDevice' --case 'RuntimeDeviceTest#physicalDisplayCanLaunchObserveAndActWithoutVirtualLease'
+            python3 scripts/emulator_test.py --serial "$(adb get-serialno)" --artifacts emulator-diagnostics --fresh --diagnostics --class VoiceInvitationDeviceTest --class AutonomyDeviceTest --class VoicePipelineDeviceTest --class VoiceAssistantDeviceTest --class SubscriptionVoiceActivationDeviceTest --class SubscriptionVoiceContextDeviceTest --class DisplayViewerDeviceTest --case 'LifecycleDeviceTest#mainThreadPromptAndDebugControlsWorkOnDevice' --case 'RuntimeDeviceTest#physicalDisplayCanLaunchObserveAndActWithoutVirtualLease'
             ./gradlew --no-daemon :app:connectedReleaseAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=dev.pocket.agent.CodexAuthDeviceTest
             adb uninstall dev.pocket.agent || true
             adb uninstall dev.pocket.agent.test || true

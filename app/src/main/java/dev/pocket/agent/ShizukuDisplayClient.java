@@ -45,7 +45,7 @@ final class ShizukuDisplayClient implements AutoCloseable {
         this.disconnected=disconnected;
         this.removeServiceOnClose=removeServiceOnClose;
         args=new Shizuku.UserServiceArgs(new ComponentName(context,ShellDisplayService.class))
-            .daemon(false).tag("pocket-agent-displays").processNameSuffix("display").version(2);
+            .daemon(false).tag("pocket-agent-displays").processNameSuffix("display").version(3);
         Shizuku.addBinderReceivedListenerSticky(received);
         Shizuku.addBinderDeadListener(died);
     }
@@ -134,6 +134,19 @@ final class ShizukuDisplayClient implements AutoCloseable {
         if(service!=null) try {service.removeDisplay(displayId);return true;}
         catch(Exception failure) {Log.w(TAG,"Display retained after cleanup failed",failure);}
         return false;
+    }
+    void showPreview(int displayId,android.view.Surface surface,IBinder session) throws ControlException {
+        // Viewing must never start or rebind a privileged service or allocate a display.
+        IDisplayShell service=remote;
+        if(service==null||!"ready".equals(status()))
+            throw new ControlException(ControlException.Code.NOT_READY,"Display service is disconnected");
+        try {service.showPreview(displayId,surface,session);}
+        catch(RemoteException e) {loseService();throw new ControlException(ControlException.Code.NOT_READY,"Display service disconnected");}
+    }
+    void hidePreview(int displayId,IBinder session) {
+        IDisplayShell service=remote;
+        if(service!=null)try {service.hidePreview(displayId,session);}
+        catch(Exception failure) {Log.w(TAG,"Could not detach display preview",failure);}
     }
     void launch(int displayId,String componentName) throws ControlException {
         try {if(!require().launchActivity(displayId,componentName))

@@ -14,6 +14,10 @@
 -keep class dev.pocket.agent.AgentAccessibility { *; }
 -keep class dev.pocket.agent.ShellDisplayService { *; }
 -keep class dev.pocket.agent.IDisplayShell** { *; }
+# Release instrumentation exercises preview ownership and delayed dialog callbacks.
+-keep class dev.pocket.agent.DisplayPreviewSurface { *; }
+-keep class dev.pocket.agent.DisplayViewer** { *; }
+-keep class dev.pocket.agent.AgentDisplayCoordinator** { *; }
 
 -keep class dev.pocket.agent.CodexAccountAuth { *; }
 

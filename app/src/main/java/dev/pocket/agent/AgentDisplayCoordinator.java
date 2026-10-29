@@ -10,6 +10,8 @@ import android.provider.Settings;
 import android.view.Display;
 import java.util.LinkedHashSet;
 import java.util.Set;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -267,6 +269,33 @@ final class AgentDisplayCoordinator implements AutoCloseable {
     }
 
     synchronized int activeCount() {return leases.size();}
+    static final class AvailableDisplay {
+        final int id;
+        final String owner,state;
+        final Object generation;
+        AvailableDisplay(int id,String owner,String state,Object generation) {
+            this.id=id;this.owner=owner;this.state=state;this.generation=generation;
+        }
+        boolean viewable() {return "ready".equals(state);}
+    }
+    synchronized List<AvailableDisplay> availableDisplays() {
+        List<AvailableDisplay> result=new ArrayList<>();
+        for(String owner:leases.owners()) {
+            String state=retiring.contains(owner)||removing.contains(owner)?"cleanup pending"
+                :leases.provisional(owner)?"starting"
+                :client==null||!"ready".equals(client.status())?"disconnected":"ready";
+            result.add(new AvailableDisplay(leases.get(owner),owner,state,leases.generation(owner)));
+        }
+        return result;
+    }
+    synchronized ShizukuDisplayClient previewClient(AvailableDisplay display) {
+        if(!Integer.valueOf(display.id).equals(leases.get(display.owner))
+            ||!leases.ownedBy(display.owner,display.generation)||leases.provisional(display.owner)
+            ||retiring.contains(display.owner)||removing.contains(display.owner)
+            ||client==null||!"ready".equals(client.status()))
+            throw new IllegalStateException("This display is no longer available");
+        return client;
+    }
     boolean accessibilityConnected() {return AccessibilityProxyBackend.connected(context);}
     String backendStatus() {ShizukuDisplayClient present=client;return present==null?ShizukuDisplayClient.prerequisites():present.status();}
 

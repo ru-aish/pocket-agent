@@ -11,7 +11,9 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.Process;
+import android.os.IBinder;
 import android.view.Display;
+import android.view.Surface;
 import java.lang.reflect.Constructor;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -40,11 +42,13 @@ public final class ShellDisplayService extends IDisplayShell.Stub {
     private static final class OwnedDisplay {
         final VirtualDisplay display;
         final ImageReader reader;
+        final DisplayPreviewSurface preview;
         final Map<Integer,Integer> protectedTasks=new LinkedHashMap<>();
         OwnedDisplay(VirtualDisplay display,ImageReader reader,DisplayTaskSnapshot before) {
             this.display=display;this.reader=reader;protectedTasks.putAll(before.taskDisplays);
+            preview=new DisplayPreviewSurface(display::setSurface,reader.getSurface());
         }
-        void close() {try {display.release();}finally {reader.close();}}
+        void close() {try {preview.close();}finally {try {display.release();}finally {reader.close();}}}
     }
 
     public ShellDisplayService() {this.context=null;android.util.Log.i("PocketDisplayShizuku","Shizuku UserService no-context constructor uid="+Process.myUid());}
@@ -115,6 +119,15 @@ public final class ShellDisplayService extends IDisplayShell.Stub {
         if(id<=Display.DEFAULT_DISPLAY || !displays.containsKey(id)) throw new SecurityException("Display is not owned by Pocket Agent");
         if(reservations.isRemoving(id)) throw new IllegalStateException("Display cleanup is in progress");
     }
+    @Override public synchronized void showPreview(int id,Surface surface,IBinder session) {
+        try {owned(id);}
+        catch(RuntimeException failure) {if(surface!=null)surface.release();throw failure;}
+        displays.get(id).preview.show(surface,session);
+    }
+    @Override public synchronized void hidePreview(int id,IBinder session) {
+        OwnedDisplay active=displays.get(id);
+        if(active!=null)active.preview.hide(session);
+    }
     @Override public void removeDisplay(int id) {
         // Only reservation/finalization hold the service monitor. Task inspection,
         // migration, and shell retries can each take seconds, but must not block
@@ -122,8 +135,11 @@ public final class ShellDisplayService extends IDisplayShell.Stub {
         DisplayRemovalSequence.run(this,
             () -> {
                 owned(id);
+                OwnedDisplay active=displays.get(id);
+                // Stop the preview before native release runs outside this monitor.
+                active.preview.detach();
                 reservations.beginRemoval(id);
-                return displays.get(id);
+                return active;
             },
             active -> reconcileAndRemoveTasks(id,active),
             active -> active.close(),
