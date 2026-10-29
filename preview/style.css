@@ -102,3 +102,25 @@
 .message{padding:0;border:0}.composer .voice-button{border-radius:50%;background:transparent}
 form.composer textarea,form.composer.is-expanded textarea{height:var(--composer-input-height,40px)!important;min-height:40px;overflow-y:auto}form.composer{align-items:flex-end}.drawer-brand #drawer-title{font-size:16px;font-weight:500}.drawer-brand{padding:0}
 .message{margin:0 0 24px;max-width:100%}.message-label{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}.message[data-role=user]{margin-left:auto;max-width:88%;width:fit-content}.message[data-role=user] .message-body{padding:12px 16px;border-radius:20px;background:var(--raised)}.message[data-role=assistant] .message-body{padding:4px 0;line-height:1.65}.conversation,.settings-body{overscroll-behavior-y:contain;overflow-anchor:auto;-webkit-overflow-scrolling:touch}.composer{display:flex;align-items:center;gap:8px;padding:4px 8px 4px 16px;border-radius:28px;min-height:56px}.composer textarea{height:40px!important;min-height:40px;max-height:160px;padding:8px 0;flex:1;min-width:0;resize:none;line-height:24px}.composer-bottom{display:contents}.provider-picker{display:none!important}.composer-actions{display:flex;gap:4px;flex-shrink:0}.composer .send{width:48px;height:48px;border-radius:50%;flex-shrink:0}.composer.is-expanded{flex-wrap:wrap;border-radius:24px;padding:12px}.composer.is-expanded textarea{flex-basis:100%;height:auto!important;min-height:64px}.composer.is-expanded .composer-actions{margin-left:auto}.composer-caption{display:none}.display-view-image{display:block;max-width:100%;max-height:70dvh;margin:16px auto;object-fit:contain;border-radius:12px;background:var(--surface)}.display-slot{width:100%;text-align:left}.worker-messages{padding-top:16px}
+
+/* Render assistant Markdown as readable blocks rather than literal punctuation. */
+.message[data-role=assistant] .message-body{white-space:normal;min-width:0}
+.message[data-role=assistant] .message-body > :first-child{margin-top:0}
+.message[data-role=assistant] .message-body > :last-child{margin-bottom:0}
+.message-body :is(p,ul,ol,blockquote,pre,table,hr){margin:0 0 14px}
+.message-body :is(ul,ol){padding-left:22px}
+.message-body li+li{margin-top:4px}
+.message-body li>p{margin-bottom:6px}
+.message-body :is(h1,h2,h3,h4,h5,h6){font-family:var(--sans);font-weight:650;letter-spacing:0;line-height:1.35;margin:18px 0 8px;overflow-wrap:anywhere}
+.message-body h1{font-size:22px}.message-body h2{font-size:19px}.message-body h3{font-size:17px}.message-body :is(h4,h5,h6){font-size:16px}
+.message-body strong{font-weight:700}
+.message-body a{color:var(--accent);text-decoration:underline;text-underline-offset:3px;overflow-wrap:anywhere}
+.message-body code,.message-body pre{font-family:ui-monospace,SFMono-Regular,Consolas,monospace}
+.message-body :not(pre)>code{padding:2px 5px;border-radius:5px;background:var(--raised);font-size:.9em;overflow-wrap:anywhere}
+.message-body pre{padding:14px;border-radius:12px;background:var(--surface);border:1px solid var(--line);white-space:pre;overflow-x:auto;max-width:100%;font-size:13px;line-height:1.55;tab-size:2}
+.message-body pre code{white-space:inherit;overflow-wrap:normal}
+.message-body blockquote{border-left:3px solid var(--accent);padding:0 0 0 14px;color:var(--muted)}
+.message-body table{display:block;width:max-content;max-width:100%;overflow-x:auto;border-collapse:collapse;font-size:14px;line-height:1.5}
+.message-body th,.message-body td{border:1px solid var(--line);padding:7px 10px;text-align:start;vertical-align:top}
+.message-body th{font-weight:650;background:var(--raised)}
+.message-body hr{border:0;border-top:1px solid var(--line)}

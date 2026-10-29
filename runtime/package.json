@@ -17,6 +17,7 @@
   },
   "devDependencies": {
     "esbuild": "0.25.12",
+    "markdown-it": "14.1.0",
     "tsx": "4.20.6"
   },
   "engines": {

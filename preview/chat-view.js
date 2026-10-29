@@ -1,12 +1,22 @@
+import {renderMarkdown} from './markdown-renderer.js';
+
+export function renderMessageBody(body,text,role) {
+  // Only assistant output is Markdown. User messages remain literal plain text.
+  // renderMarkdown escapes raw HTML and validates links before generating HTML.
+  if(role==='assistant')body.innerHTML=renderMarkdown(text);
+  else body.textContent=text;
+}
+
 export function reconcileMessages(parent,items,label='Assistant') {
   let changed=false;
   items.forEach((item,index)=>{
     let article=parent.children[index];
-    if(!article){article=document.createElement('article');article.className='message';const role=document.createElement('h2');role.className='message-label sr-only';const body=document.createElement('p');body.className='message-body';article.append(role,body);parent.append(article);changed=true;}
+    if(!article){article=document.createElement('article');article.className='message';const role=document.createElement('h2');role.className='message-label sr-only';const body=document.createElement('div');body.className='message-body';article.append(role,body);parent.append(article);changed=true;}
     const role=item.role==='user'?'You':label,text=item.text||item.content||'';
     article.dataset.role=item.role;
     if(article.firstElementChild.textContent!==role)article.firstElementChild.textContent=role;
-    if(article.querySelector('.message-body').textContent!==text){article.querySelector('.message-body').textContent=text;changed=true;}
+    // A formatted body has different textContent than its original Markdown.
+    if(article._messageText!==text||article._messageRole!==item.role){renderMessageBody(article.querySelector('.message-body'),text,item.role);article._messageText=text;article._messageRole=item.role;changed=true;}
   });
   while(parent.children.length>items.length){parent.lastElementChild.remove();changed=true;}
   return changed;

@@ -1,6 +1,8 @@
 import {build} from 'esbuild';
 import {writeFile,mkdir,stat,copyFile} from 'node:fs/promises';
 import {gzipSync} from 'node:zlib';
+// Bundle the offline Markdown renderer consumed by the phone WebView and web preview.
+await build({entryPoints:['preview-markdown.mjs'],outfile:'../preview/markdown-renderer.js',bundle:true,platform:'browser',format:'esm',target:'es2020',minify:true,legalComments:'inline',logLevel:'info'});
 const result=await build({entryPoints:['src/index.ts'],outfile:'dist/runtime.cjs',bundle:true,platform:'node',format:'cjs',target:'node22',minify:true,sourcemap:false,metafile:true,legalComments:'eof',logLevel:'info'});
 await mkdir('dist',{recursive:true});
 await writeFile('dist/bundle-meta.json',JSON.stringify(result.metafile,null,2));
@@ -11,7 +13,7 @@ const emittedInputs=Object.entries(output.inputs).filter(([,data])=>data.bytesIn
 const report={bytes,gzipBytes:gzipSync(await readFile('dist/runtime.cjs')).length,inputs:Object.keys(result.metafile.inputs),emittedInputs,note:'JavaScript bundle only; excludes Javet/Node native libraries and Android resources. Not APK size or RAM. inputs are parsed graph; emittedInputs measures post-tree-shaking source contributions.'};
 await writeFile('dist/bundle-report.json',JSON.stringify(report,null,2));
 let notices='';
-for(const [name,path] of [['Pi9','vendor/pi9/LICENSE'],['Pi','PI-LICENSE'],['Pi MCP','PI-LICENSE'],['MCP TypeScript SDK','node_modules/@earendil-works/pi-mcp/LICENSES/modelcontextprotocol-typescript-sdk.txt'],['OpenAI SDK','node_modules/openai/LICENSE'],['TypeBox','node_modules/typebox/license'],['partial-json','node_modules/partial-json/LICENSE']])notices+=`\n\n${name}\n${await readFile(path,'utf8')}`;
+for(const [name,path] of [['Pi9','vendor/pi9/LICENSE'],['Pi','PI-LICENSE'],['Pi MCP','PI-LICENSE'],['MCP TypeScript SDK','node_modules/@earendil-works/pi-mcp/LICENSES/modelcontextprotocol-typescript-sdk.txt'],['OpenAI SDK','node_modules/openai/LICENSE'],['TypeBox','node_modules/typebox/license'],['partial-json','node_modules/partial-json/LICENSE'],['Markdown-it','node_modules/markdown-it/LICENSE'],['Markdown-it argparse','node_modules/argparse/LICENSE'],['Markdown-it entities','node_modules/entities/LICENSE'],['Markdown-it linkify-it','node_modules/linkify-it/LICENSE'],['Markdown-it mdurl','node_modules/mdurl/LICENSE'],['Markdown-it punycode.js','node_modules/punycode.js/LICENSE-MIT.txt'],['Markdown-it uc.micro','node_modules/uc.micro/LICENSE.txt']])notices+=`\n\n${name}\n${await readFile(path,'utf8')}`;
 await writeFile('dist/THIRD_PARTY_NOTICES.txt',notices);
 const manifest={protocol:1,pi:'1.2.0',piCommit:'dc939913f6142adce7c09da5707fdd6451b37fb0',piMcp:'1.2.0',piMcpCommit:'06a466935536f8c9bcacb2d5efc0fc021be1bdff',pi9:'0.12.0',pi9Commit:'94405f79bb1e400fcba5e1b973778ef82d8378b2',...report};
 await writeFile('dist/runtime-manifest.json',JSON.stringify(manifest,null,2));

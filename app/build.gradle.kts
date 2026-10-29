@@ -3,7 +3,7 @@ val ngrokNativeClasses = configurations.create("ngrokNativeClasses") { isTransit
 val ngrokAndroidArm64 = configurations.create("ngrokAndroidArm64") { isTransitive = false }
 val syncPocketUi = tasks.register<Sync>("syncPocketUi") {
     from(rootProject.file("preview")) {
-        include("index.html", "style.css", "mark.svg", "connection.js", "drawer-swipe.js", "chat-titles.js", "chat-view.js", "native-*.js", "native.css")
+        include("index.html", "style.css", "mark.svg", "connection.js", "drawer-swipe.js", "chat-titles.js", "chat-view.js", "markdown-renderer.js", "native-*.js", "native.css")
     }
     into(layout.buildDirectory.dir("generated/pocket-ui/ui"))
 }

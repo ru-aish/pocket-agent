@@ -1,7 +1,7 @@
 import {mountConnection,mountVoiceConnection} from './connection.js';
 import {attachDrawerSwipe} from './drawer-swipe.js';
 import {shortTitle} from './chat-titles.js';
-import {reconcileMessages,mountComposer} from './chat-view.js';
+import {reconcileMessages,renderMessageBody,mountComposer} from './chat-view.js';
 
 let sequence=0;const waiting=new Map();
 window.pocketReply=(id,value,error)=>{const item=waiting.get(id);if(!item)return;waiting.delete(id);clearTimeout(item.timer);error?item.reject(Error(error)):item.resolve(value);};
@@ -33,7 +33,7 @@ async function nameSavedChat(chat){if(namingChat||(titleRetryAt.get(chat.threadI
 async function loadHistory(){const generation=++historyGeneration;const result=await api('/native/chats',{query:$('#chat-search').value});if(generation!==historyGeneration)return;const list=$('#history');list.replaceChildren();for(const chat of result.chats){list.append(button(shortTitle(chat.title||'Saved conversation'),async()=>{closeDrawer();if(chat.threadId!==snapshot.state.mainThreadId){snapshot=await api('/native/open-chat',{threadId:chat.threadId});prefs=snapshot.preferences;}archive=null;renderChat(true);},'history-item'));}if(!result.chats.length)list.append(el('p','history-empty',$('#chat-search').value?'No chats match your search.':'No chats yet. Start a conversation and it will appear here.'));const unnamed=result.chats.find(chat=>!chat.named&&(titleRetryAt.get(chat.threadId)||0)<=Date.now());if(unnamed)void nameSavedChat(unnamed);}
 $('#chat-search').oninput=()=>void act(loadHistory);
 async function openArchive(id,title,offset){const page=await api('/native/archive',{threadId:id,offset});archive={id,title,page};renderChat(true);}
-function message(parent,item){const article=el('article','message');article.dataset.role=item.role;article.append(el('h2','message-label',item.role==='user'?'You':providerName()),el('p','message-body',item.text||item.content||''));parent.append(article);}
+function message(parent,item){const article=el('article','message');article.dataset.role=item.role;const body=el('div','message-body');renderMessageBody(body,item.text||item.content||'',item.role);article.append(el('h2','message-label',item.role==='user'?'You':providerName()),body);parent.append(article);}
 function providerName(){return {nebius:'Nebius',opencode:'OpenCode','codex-account':'Codex'}[prefs.provider]||'Pocket';}
 function displayText(display){if(!display||display.state==='none'||display.state==='idle')return '';return {waiting:'Waiting for a virtual display',preparing:'Preparing virtual display',active:`Using virtual display${display.displayId==null?'':' #'+display.displayId}`,releasing:'Releasing virtual display'}[display.state]||'';}
 function taskCard(parent,task){const n=button('',()=>openWorker(task.conversationId),'native-task');n.dataset.worker=task.conversationId;n.append(el('strong','',task.label||task.title||'Background task'),el('small','',task.status||'Ready'));parent.append(n);}
