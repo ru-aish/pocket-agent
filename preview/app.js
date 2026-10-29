@@ -1,10 +1,11 @@
+import {mountModelPicker} from './model-picker.js';
 import { createSettings } from './settings.js';
 import { api } from './connection.js';
 import { createVoice } from './voice.js';
 import { createActivity } from './activity.js';
 import { attachDrawerSwipe } from './drawer-swipe.js';
 import {shortTitle} from './chat-titles.js';
-import {reconcileMessages,mountComposer} from './chat-view.js';
+import {reconcileMessages,mountComposer,mountThinkingIndicator} from './chat-view.js';
 
 const icons = {
   menu:'M4 7h16M4 12h12M4 17h16',
@@ -95,7 +96,10 @@ chatSearch.addEventListener('input', () => renderHistory());
 let conversations = [];
 let current = { id: crypto.randomUUID(), messages: [] };
 let theme = 'dark';
+const setThinking=mountThinkingIndicator(document.querySelector('#conversation'));
 let responding=false,chatController;
+const modelPicker=mountModelPicker({getConfig:()=>settings.preferences(),isBusy:()=>responding,save:async config=>settings.setModel(config),onConnect:()=>openPanel('settings')});
+document.querySelector('#provider-picker').onclick=()=>void modelPicker.open();
 try {
   const saved = JSON.parse(localStorage.getItem('pocket-preview-chats') || '[]');
   if (Array.isArray(saved)) conversations = saved.filter(chat => chat && typeof chat.id === 'string' && Array.isArray(chat.messages)).map(chat => ({id:chat.id,title:typeof chat.title==='string'?shortTitle(chat.title):'',messages:chat.messages.filter(m => m && ['user','assistant'].includes(m.role) && typeof m.text === 'string')}));
@@ -115,7 +119,7 @@ async function nameChat(chat){
   if(renamed)renderHistory();
 }
 function syncInput() { const live=!responding&&!input.value.trim();send.disabled=false;send.classList.toggle('is-voice',live);send.setAttribute('aria-label',responding?'Stop response':live?'Start Codex live voice':'Send message');send.querySelector('[data-icon]').dataset.icon=responding?'stop':live?'wave':'up';paintIcons(send);save('pocket-preview-draft', input.value); }
-function setResponding(value){responding=value;send.setAttribute('aria-label',value?'Stop response':'Send message');send.querySelector('[data-icon]').dataset.icon=value?'stop':'up';paintIcons(send);syncInput();}
+function setResponding(value){responding=value;setThinking(value);send.setAttribute('aria-label',value?'Stop response':'Send message');send.querySelector('[data-icon]').dataset.icon=value?'stop':'up';paintIcons(send);syncInput();}
 function renderHistory(target = document.querySelector('#history'), query = chatSearch.value) {
   if (!target) return;
   target.replaceChildren();

@@ -72,6 +72,7 @@ public final class MainActivity extends Activity implements AgentService.Observe
     private static final int DICTATE_MESSAGE = 65000;
     private final ExecutorService accountFiles = Executors.newSingleThreadExecutor();
     private final ExecutorService historyQueries = Executors.newSingleThreadExecutor();
+    private final ExecutorService uiReads = Executors.newSingleThreadExecutor();
     private CodexAccountAuth accountFlow;
     private AlertDialog accountDialog;
     private long accountGeneration;
@@ -86,7 +87,7 @@ public final class MainActivity extends Activity implements AgentService.Observe
     private GroqSpeechInput groqCapture;
     private String pendingDictationEngine="system";
     private PocketWebUi pocketUi;
-    private JSONObject webAuth = json("state", "idle");
+    private volatile JSONObject webAuth = json("state", "idle");
     private final java.util.Map<String, PocketWebUi.Reply> webRequests = new java.util.HashMap<>();
     private final java.util.Map<String, JSONArray> webModelProofs = new java.util.HashMap<>();
     private String pendingVoiceInvitation;
@@ -297,11 +298,12 @@ public final class MainActivity extends Activity implements AgentService.Observe
         if (pocketUi != null) pocketUi.close();
         if (groqCapture != null) groqCapture.close();
         invalidateAccountOperations();
-        accountFiles.shutdownNow(); historyQueries.shutdownNow(); store.close(); super.onDestroy();
+        accountFiles.shutdownNow(); historyQueries.shutdownNow(); uiReads.shutdownNow(); store.close(); super.onDestroy();
     }
     @Override public void onAgentEvent(JSONObject event) {
         if (pocketUi != null) {
-            pocketUi.event("agent", event);
+            // State is pulled by the WebView; do not serialize its full transcript twice.
+            pocketUi.event("agent", json("type",event.optString("type"),"error",event.optString("error")));
             PocketWebUi.Reply reply = webRequests.remove(event.optString("requestId"));
             if(reply!=null&&event.optString("type").equals("models")){JSONArray catalog=event.optJSONArray("models");if(catalog!=null)for(int i=0;i<catalog.length();i++){JSONObject model=catalog.optJSONObject(i);if(model!=null&&model.optJSONArray("supportedReasoningLevels")!=null)webModelProofs.put(model.optString("id"),model.optJSONArray("supportedReasoningLevels"));}}
             if (reply != null) reply.complete(event, event.optString("error").isEmpty() ? null : event.optString("error"));
@@ -369,6 +371,12 @@ public final class MainActivity extends Activity implements AgentService.Observe
         else if (type.equals("ready")) render();
     }
     private void render() {
+        // The native shell is detached once the WebView is installed. Rebuilding
+        // its transcript and task cards on every streaming event blocks gestures.
+        if (pocketUi != null) {
+            if (workerTranscript != null && viewedWorker != null) workerTranscript.setText(workerMessages(viewedWorker));
+            return;
+        }
         status.setText(!AgentService.isRunning() ? "Stopped · Send starts the runtime" : state.optBoolean("busy") ? "Main is responding" : state.optBoolean("active") ? "Workers active · Main is available" : "Ready");
         if(AgentService.isRunning() && !state.isNull("lastError") && !state.optString("lastError").isEmpty()) status.setText("Error · "+state.optString("lastError"));
         String rendered=formatMessages(state.optJSONArray("messages"));
@@ -836,12 +844,13 @@ public final class MainActivity extends Activity implements AgentService.Observe
         for(String provider:new String[]{"nebius","opencode","codex-account"})providers.put(provider,json("configured",mode.equals(provider)&&!config.optString(provider.equals("codex-account")?"accessToken":"apiKey").isEmpty()));
         return json("providers",providers,"auth",webAuth,"voiceAccount",!new CredentialStore(this).getVoiceCodex().optString("accessToken").isEmpty(),"voice",json("groq",new VoiceCredentialStore(this,"groq").configured(),"deepgram",new VoiceCredentialStore(this).configured()));
     }
-    private JSONObject webSnapshot() throws Exception {
+    private JSONObject webSnapshot() throws Exception { return webSnapshot(state); }
+    private JSONObject webSnapshot(JSONObject currentState) throws Exception {
         JSONObject config = new CredentialStore(this).get(); String mode=config.optString("authMode");
-        JSONObject prefs=json("name",getSharedPreferences("pocket-ui",0).getString("name",""),"provider",java.util.List.of("nebius","opencode","codex-account").contains(mode)?mode:"none","model",config.optString("model"),"reasoning",config.optString("reasoningEffort","low"),"instructions",state.optString("personalInstructions"),"stt",getSharedPreferences("pocket-ui",0).getString("voiceEngine","system"),"wake",WakeWordService.enabled(this),"autonomy",AutonomyStore.enabled(this));
+        JSONObject prefs=json("name",getSharedPreferences("pocket-ui",0).getString("name",""),"provider",java.util.List.of("nebius","opencode","codex-account").contains(mode)?mode:"none","model",config.optString("model"),"reasoning",config.optString("reasoningEffort","low"),"instructions",currentState.optString("personalInstructions"),"stt",getSharedPreferences("pocket-ui",0).getString("voiceEngine","system"),"wake",WakeWordService.enabled(this),"autonomy",AutonomyStore.enabled(this));
         JSONArray servers=new JSONArray(),stored=credentialsForUi();
         for(int i=0;i<stored.length();i++){JSONObject server=stored.getJSONObject(i);servers.put(json("id",server.optString("id"),"name",server.optString("name"),"url",server.optString("url"),"authMode",server.optString("authMode"),"enabled",server.optBoolean("enabled")));}
-        JSONObject result=json("state",state,"preferences",prefs,"connection",webStatus(),"servers",servers,"voiceActive",SubscriptionVoiceService.isActive());
+        JSONObject result=json("state",currentState,"preferences",prefs,"connection",webStatus(),"servers",servers,"voiceActive",SubscriptionVoiceService.isActive());
         try(AutonomyStore automation=new AutonomyStore(this)){result.put("autonomy",automation.load());result.put("autonomyStatus",automation.status());}
         return result;
     }
@@ -849,10 +858,15 @@ public final class MainActivity extends Activity implements AgentService.Observe
     private void webRequest(String path,JSONObject body,PocketWebUi.Reply reply) throws Exception {
         CredentialStore credentials=new CredentialStore(this);
         switch(path) {
-            case "/native/snapshot" -> { reply.complete(webSnapshot(),null);return; }
+            case "/native/snapshot" -> {
+                JSONObject currentState=state;
+                uiReads.submit(()->{try {reply.complete(webSnapshot(currentState),null);}
+                    catch(Exception failure){reply.complete(null,"Could not refresh the phone state. Try again.");}});
+                return;
+            }
             case "/native/keyboard-hide" -> {android.view.inputmethod.InputMethodManager ime=getSystemService(android.view.inputmethod.InputMethodManager.class);ime.hideSoftInputFromWindow(pocketUi.view.getWindowToken(),0);pocketUi.keyboardVisibility(false);}
             case "/native/display-preview" -> {int id=body.optInt("displayId",-1);historyQueries.submit(()->{try {reply.complete(AgentDisplayCoordinator.shared(getApplicationContext()).preview(id),null);}catch(Exception unavailable){reply.complete(null,"This private screen has finished or is unavailable");}});return;}
-            case "/api/provider/status" -> { reply.complete(webStatus(),null);return; }
+            case "/api/provider/status" -> { replyWebStatus(reply);return; }
             case "/native/chats" -> { historyQueries.submit(()->{try(StateStore history=new StateStore(getApplicationContext())){JSONArray chats=history.listConversations(body.optString("query"));for(int i=0;i<chats.length();i++){JSONObject chat=chats.getJSONObject(i);String title=getSharedPreferences("conversation-titles",0).getString(chat.optString("threadId"),"");chat.put("named",!title.isEmpty());if(!title.isEmpty())chat.put("title",title);}reply.complete(json("chats",chats),null);}catch(Exception failure){reply.complete(null,"Could not read saved chats");}});return; }
             case "/native/title" -> {
                 String threadId=body.optString("threadId");if(threadId.isEmpty()||threadId.length()>300)throw new IllegalArgumentException("Invalid conversation");
@@ -929,7 +943,11 @@ public final class MainActivity extends Activity implements AgentService.Observe
             case "/native/decision" -> {String id=body.optString("id");try(AutonomyStore automation=new AutonomyStore(this)){automation.incoming(json("id","decision:"+id,"type","decision","decisionId",id,"approved",body.optBoolean("approved"),"answer",body.optString("answer")));}}
             default -> throw new IllegalArgumentException("Unknown phone action");
         }
-        reply.complete(webStatus(),null);
+        replyWebStatus(reply);
+    }
+    private void replyWebStatus(PocketWebUi.Reply reply) {
+        uiReads.submit(()->{try {reply.complete(webStatus(),null);}
+            catch(Exception failure){reply.complete(null,"Could not read connection status. Try again.");}});
     }
     private void webPhoneAction(String action) {
         switch(action) {

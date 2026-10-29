@@ -73,7 +73,10 @@ final class PocketWebUi {
     }
     private static WebResourceResponse empty() { return new WebResourceResponse("text/plain","UTF-8",new ByteArrayInputStream(new byte[0])); }
     private void respond(String id,JSONObject value,String error) {
-        activity.runOnUiThread(()->{if(!closed)view.evaluateJavascript("window.pocketReply?.("+JSONObject.quote(id)+","+(value==null?"null":value.toString())+","+(error==null?"null":JSONObject.quote(error))+")",null);});
+        // Snapshot reads complete on a worker; serialize there before posting
+        // the small WebView dispatch to the UI thread.
+        String script="window.pocketReply?.("+JSONObject.quote(id)+","+(value==null?"null":value.toString())+","+(error==null?"null":JSONObject.quote(error))+")";
+        activity.runOnUiThread(()->{if(!closed)view.evaluateJavascript(script,null);});
     }
     void event(String type,JSONObject value) { if(!closed)view.evaluateJavascript("window.pocketEvent?.("+JSONObject.quote(type)+","+value+")",null); }
     void keyboardVisibility(boolean visible) {

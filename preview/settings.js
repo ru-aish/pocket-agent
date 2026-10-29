@@ -20,8 +20,8 @@ export function createSettings({screen,onClose,getTheme,setTheme,onProviderChang
   let disposeConnection=()=>{};
   let body,status;
   function persist() {
-    try { localStorage.setItem('pocket-preview-settings',JSON.stringify(prefs));status.textContent='Saved on this browser'; }
-    catch { status.textContent='Could not save locally. Changes apply to this session.'; }
+    try { localStorage.setItem('pocket-preview-settings',JSON.stringify(prefs));status&&(status.textContent='Saved on this browser'); }
+    catch { status&&(status.textContent='Could not save locally. Changes apply to this session.'); }
   }
   function heading(title,description) {body.append(el('h2','settings-section-title',title));if(description)body.append(el('p','settings-description',description));}
   function group() {const node=el('div','settings-group');body.append(node);return node;}
@@ -113,5 +113,5 @@ export function createSettings({screen,onClose,getTheme,setTheme,onProviderChang
   }
   function close() {disposeConnection();screen.hidden=true;onClose();}
   screen.addEventListener('keydown',event=>{if(event.key==='Escape'){event.preventDefault();route==='overview'?close():render('overview');}});
-  return {open(section='overview'){screen.hidden=false;render(section);},preferences(){return {provider:prefs.provider,model:prefs.model,reasoning:prefs.reasoning,instructions:prefs.instructions,stt:prefs.stt};}};
+  return {setModel(config){prefs.model=config.model;prefs.reasoning=config.reasoning;persist();},open(section='overview'){screen.hidden=false;render(section);},preferences(){return {provider:prefs.provider,model:prefs.model,reasoning:prefs.reasoning,instructions:prefs.instructions,stt:prefs.stt};}};
 }

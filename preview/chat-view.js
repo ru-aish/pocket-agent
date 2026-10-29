@@ -28,3 +28,11 @@ export function mountComposer(input) {
   conversation?.addEventListener('touchend',()=>{gesture=null;},{passive:true});conversation?.addEventListener('touchcancel',()=>{gesture=null;},{passive:true});
   window.addEventListener('pocket-composer-reset',dismiss);measure();return resize;
 }
+
+export function mountThinkingIndicator(conversation) {
+  const indicator=document.createElement('div');indicator.className='thinking-indicator';indicator.hidden=true;
+  indicator.setAttribute('role','status');indicator.setAttribute('aria-label','Pocket is thinking or responding');
+  for(let i=0;i<3;i++){const dot=document.createElement('span');dot.className='thinking-dot';dot.setAttribute('aria-hidden','true');indicator.append(dot);}
+  conversation.append(indicator);
+  return active=>{const visible=!!active;if(indicator.hidden===!visible)return;const follow=conversation.scrollHeight-conversation.scrollTop-conversation.clientHeight<100;indicator.hidden=!visible;if(visible&&follow)conversation.scrollTop=conversation.scrollHeight;};
+}

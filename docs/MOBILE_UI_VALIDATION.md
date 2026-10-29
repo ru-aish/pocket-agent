@@ -76,3 +76,27 @@ debug captures are included in this contribution. Real cloud Groq/Deepgram
 audio, every OAuth interaction, release signing and all OEM/Android combinations
 have not been revalidated by this PR. The standalone browser cannot execute
 Android schedules or phone tools.
+
+### Menu responsiveness and composer controls
+
+The WebView no longer rebuilds the detached native transcript on runtime updates.
+Snapshot/status reads and snapshot serialization run on a dedicated worker, and
+bursty runtime notifications coalesce into a refresh with a trailing read. Drawer
+history loads after the opening transition; search requests are debounced and
+swipe style updates are limited to one per animation frame. Navigating away from
+a pending worker inspection invalidates its result.
+
+The composer has a bounded, model-only chip next to the mic. Its picker discovers
+the connected provider's model catalog and offers only advertised reasoning levels.
+Other providers still require connecting their account/key in Settings. The app's
+credential store currently has one active chat provider. A three-dot indicator is
+visible while the current chat is busy, with reduced-motion support. Touch feedback
+uses the control's own shape, with the WebView tap highlight disabled.
+
+Validation: `npm run test:ui` covers refresh coalescing, trailing updates,
+cancellation/recovery, bounded model labels, reasoning metadata, and the served
+module graph. Browser QA with a mocked native bridge and 120 long messages verified
+100 runtime notifications produced one snapshot read, busy/idle dot visibility,
+model/effort saving, and repeated chat/thread/menu navigation. This is functional
+browser coverage, not a phone FPS measurement. Android compilation and real-device
+menu/gesture/keyboard performance still require CI and phone-side validation.
