@@ -15,7 +15,7 @@ if(!Number.isInteger(previewPort)||previewPort<0||previewPort>65535)throw new Er
 const root = dirname(fileURLToPath(import.meta.url));
 const clients = new Set();
 const types = { '.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript', '.svg': 'image/svg+xml' };
-const allowed = new Set(['index.html', 'style.css', 'app.js', 'settings.js', 'connection.js', 'voice.js', 'activity.js', 'mark.svg', 'drawer-swipe.js', 'chat-titles.js', 'chat-view.js']);
+const allowed = new Set(['index.html', 'style.css', 'app.js', 'settings.js', 'connection.js', 'voice.js', 'activity.js', 'mark.svg', 'drawer-swipe.js', 'chat-titles.js', 'chat-view.js', 'markdown-renderer.js']);
 function json(res,status,data){res.writeHead(status,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify(data));}
 async function readJson(req){let size=0;const chunks=[];for await(const chunk of req){size+=chunk.length;if(size>262144)throw new ProviderFailure('Request exceeds 256 KB.',413);chunks.push(chunk);}try{const input=JSON.parse(Buffer.concat(chunks).toString('utf8'));if(!input||typeof input!=='object'||Array.isArray(input))throw Error();return input;}catch{throw new ProviderFailure('Send a valid JSON object.');}}
 const server = http.createServer(async (req, res) => {
