@@ -263,3 +263,8 @@ form.composer.has-draft textarea{flex-basis:100%}
 .model-picker-status{font-size:12px;line-height:1.4;color:#bbb;margin:6px 4px 0}.model-picker-status:empty{display:none}.model-picker-retry{border-radius:10px;padding:4px 12px;min-height:36px;margin-top:6px;color:#9fc4ff}
 
 .message-body>p{white-space:pre-wrap}.message-body>p+p{margin-top:12px}.message-table-scroll{max-width:100%;overflow-x:auto;overscroll-behavior-x:contain;margin:16px 0;white-space:normal;border:1px solid var(--line);border-radius:10px}.message-table-scroll table{border-collapse:collapse;width:100%;min-width:280px;font-size:14px;line-height:1.5}.message-table-scroll th,.message-table-scroll td{padding:10px 14px;border-bottom:1px solid var(--line);border-right:1px solid var(--line);min-width:100px;white-space:normal;overflow-wrap:normal}.message-table-scroll th{font-weight:600;background:var(--raised)}.message-table-scroll tr:last-child td{border-bottom:0}.message-table-scroll th:last-child,.message-table-scroll td:last-child{border-right:0}
+
+/* TEMPORARY: hide the model selector chip in the message bar only.
+   Keep model-picker.js and Settings > AI & model functional for future re-enable.
+   Remove this rule when the composer selector is ready to return. */
+#composer .model-picker-trigger{display:none!important}
