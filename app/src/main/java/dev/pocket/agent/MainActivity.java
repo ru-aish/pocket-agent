@@ -94,7 +94,7 @@ public final class MainActivity extends Activity implements AgentService.Observe
         FrameLayout transcriptFrame = new FrameLayout(this);
         messages = new ScrollView(this); transcript = text(""); transcript.setTextIsSelectable(true); transcript.setPadding(0, dp(12), 0, dp(12)); messages.addView(transcript);
         transcriptFrame.addView(messages, new FrameLayout.LayoutParams(-1, -1));
-        jumpToBottom = button("↓", () -> { messages.fullScroll(View.FOCUS_DOWN); messages.post(this::updateJumpToBottom); });
+        jumpToBottom = button("↓", this::jumpToLatestMessage);
         jumpToBottom.setContentDescription("Jump to latest message"); jumpToBottom.setVisibility(View.GONE); jumpToBottom.setMinWidth(0); jumpToBottom.setMinimumWidth(0);
         FrameLayout.LayoutParams jumpParams = new FrameLayout.LayoutParams(dp(48), dp(48), Gravity.END | Gravity.BOTTOM); jumpParams.setMargins(0, 0, dp(6), dp(6));
         transcriptFrame.addView(jumpToBottom, jumpParams);
@@ -314,7 +314,7 @@ public final class MainActivity extends Activity implements AgentService.Observe
         if(!rendered.contentEquals(transcript.getText())) {
             boolean follow=messages.getScrollY()+messages.getHeight()>=transcript.getHeight()-dp(48);
             transcript.setText(rendered);
-            if(follow)messages.post(()->{ messages.fullScroll(View.FOCUS_DOWN); updateJumpToBottom(); });
+            if(follow)jumpToLatestMessage();
             else messages.post(this::updateJumpToBottom);
         } else messages.post(this::updateJumpToBottom);
         taskList.removeAllViews(); JSONArray tasks = state.optJSONArray("tasks");
@@ -335,10 +335,25 @@ public final class MainActivity extends Activity implements AgentService.Observe
     private String workerMessages(String id) {
         JSONObject all = state.optJSONObject("workerMessages"); return formatMessages(all == null ? null : all.optJSONArray(id));
     }
+    private int latestMessageScrollY() {
+        if (messages == null || messages.getChildCount() == 0) return 0;
+        View content = messages.getChildAt(0);
+        int viewport = messages.getHeight() - messages.getPaddingTop() - messages.getPaddingBottom();
+        return Math.max(0, content.getHeight() - Math.max(0, viewport));
+    }
+    private void jumpToLatestMessage() {
+        if (messages == null) return;
+        messages.post(() -> {
+            messages.scrollTo(0, latestMessageScrollY());
+            messages.postOnAnimation(() -> {
+                messages.scrollTo(0, latestMessageScrollY());
+                updateJumpToBottom();
+            });
+        });
+    }
     private void updateJumpToBottom() {
         if (jumpToBottom == null || messages == null || messages.getChildCount() == 0) return;
-        View content = messages.getChildAt(0);
-        boolean away = content.getHeight() - messages.getScrollY() - messages.getHeight() > dp(48);
+        boolean away = latestMessageScrollY() - messages.getScrollY() > dp(48);
         jumpToBottom.setVisibility(away ? View.VISIBLE : View.GONE);
     }
     private void newMainThread() {
