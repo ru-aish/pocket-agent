@@ -868,6 +868,12 @@ public final class MainActivity extends androidx.activity.ComponentActivity impl
         if(android.os.SystemClock.elapsedRealtime()>=deadline){reply.complete(null,"Could not close this chat. Stop active work and try again.");return;}
         pocketUi.view.postDelayed(()->finishChatDeletion(threadId,reply,deadline),50);
     }
+    static JSONObject webModelSettings(JSONObject saved) throws Exception {
+        JSONObject settings=new JSONObject(saved.toString());
+        if(settings.optString("authMode").equals("codex-account"))
+            for(String field:new String[]{"accessToken","refreshToken","accountId","expiresAt","idToken"})settings.remove(field);
+        return settings;
+    }
     private void webRequest(String path,JSONObject body,PocketWebUi.Reply reply) throws Exception {
         CredentialStore credentials=new CredentialStore(this);
         switch(path) {
@@ -938,6 +944,9 @@ public final class MainActivity extends androidx.activity.ComponentActivity impl
                 JSONObject config=credentials.get();String provider=body.optString("provider");
                 if(!java.util.List.of("nebius","opencode","codex-account").contains(provider))throw new IllegalArgumentException("Choose a provider");
                 if(!provider.equals(config.optString("authMode")))throw new IllegalStateException("Connect this provider first");
+                // Match native Settings: an existing account model change is not an import.
+                config=webModelSettings(config);
+                config.put("preferredReasoningEffort",body.optString("reasoning","low"));
                 config.put("model",body.optString("model"));config.put("reasoningEffort",body.optString("reasoning","low"));config.put("modelSource",body.has("supportedReasoningLevels")?"catalog":"manual");
                 if(body.has("supportedReasoningLevels")){JSONArray proof=webModelProofs.get(body.optString("model"));if(proof==null)throw new IllegalStateException("Discover models again before saving this reasoning choice");config.put("reasoningEffortModel",body.optString("model"));config.put("reasoningEfforts",proof);}
                 if(!provider.equals("codex-account")){validateWebConnection(config,reply);return;}

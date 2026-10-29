@@ -1,8 +1,9 @@
 export async function api(path,body,{signal}={}){
-  if(window.PocketNative)return window.pocketRequest(path,body||{},signal);
+  const changed=result=>{if(['/api/provider/key','/api/provider/disconnect','/api/auth/codex/start','/api/auth/codex/import','/api/auth/codex/cancel'].includes(path))window.dispatchEvent(new Event('pocket-model-catalog-changed'));return result;};
+  if(window.PocketNative)return changed(await window.pocketRequest(path,body||{},signal));
   const response=await fetch(path,{method:body===undefined?'GET':'POST',signal,headers:{'X-Pocket-Request':'1',...(body===undefined?{}:{'Content-Type':'application/json'})},...(body===undefined?{}:{body:JSON.stringify(body)})});
   let result;try{result=await response.json();}catch{throw Error('The local connection service is unavailable. Refresh and try again.');}
-  if(!response.ok)throw Error(result.error||'Connection request failed.');return result;
+  if(!response.ok)throw Error(result.error||'Connection request failed.');return changed(result);
 }
 function node(tag,className,text){const value=document.createElement(tag);if(className)value.className=className;if(text!==undefined)value.textContent=text;return value;}
 const storagePlace=window.PocketNative?'phone':'computer';

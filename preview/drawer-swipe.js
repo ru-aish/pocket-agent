@@ -18,7 +18,7 @@ export function attachDrawerSwipe({workspace,isOpen,canOpen,open,close}){
   }
   workspace.addEventListener('touchstart',event=>{
     if(event.touches.length!==1){finish(true);return;}
-    if(event.target.closest('input,textarea,select,[contenteditable=true]')||window.getSelection()?.toString())return;
+    if(event.target.closest('input,textarea,select,[contenteditable=true],.message-table-scroll')||window.getSelection()?.toString())return;
     const wasOpen=isOpen();if(!wasOpen&&!canOpen())return;
     const touch=event.touches[0];gesture={x:touch.clientX,y:touch.clientY,started:performance.now(),wasOpen,dragging:false,width:Math.min(320,workspace.clientWidth-48),offset:0};
   },{passive:true});

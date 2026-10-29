@@ -100,3 +100,20 @@ module graph. Browser QA with a mocked native bridge and 120 long messages verif
 model/effort saving, and repeated chat/thread/menu navigation. This is functional
 browser coverage, not a phone FPS measurement. Android compilation and real-device
 menu/gesture/keyboard performance still require CI and phone-side validation.
+
+
+### Composer model popover (follow-up branch)
+
+The model chip opens a compact panel anchored 8px above the composer, rather
+than a centered dialog. Its model-and-effort header toggles a bounded scrollable
+model list; selecting a model or releasing the effort slider saves directly.
+The blue slider displays only the selected model's advertised effort levels.
+The panel follows composer/viewport resizing and closes on outside taps or Back.
+Successful catalog discovery is cached in memory per provider for the mounted UI;
+concurrent requests share discovery, failures can retry, and connection changes
+invalidate the cache. No credentials or catalog data are written to browser storage.
+
+Browser checks with the native-bridge fixture verified header/list interaction,
+automatic effort saving, one discovery across repeated opens, and a 70-model list
+bounded to 240px with internal scrolling. Native phone keyboard behavior still
+needs device validation. `npm run test:ui` also covers cache reuse and retry.

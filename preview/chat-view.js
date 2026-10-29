@@ -1,12 +1,40 @@
+// Parse pipe tables without interpreting HTML from model output.
+export function tableCells(line){
+ let value=line.trim();if(value.startsWith('|'))value=value.slice(1);if(value.endsWith('|')&&!value.endsWith('\\|'))value=value.slice(0,-1);
+ const cells=[];let cell='',escaped=false,code=false;
+ for(const char of value){if(escaped){cell+=char;escaped=false;}else if(char==='\\'){escaped=true;}else if(char==='`'){code=!code;cell+=char;}else if(char==='|'&&!code){cells.push(cell.trim());cell='';}else cell+=char;}
+ cells.push((cell+(escaped?'\\':'')).trim());return cells;
+}
+export function messageBlocks(text){
+ const lines=String(text).split('\n'),blocks=[];let plain=[],fenced=false;
+ const flush=()=>{if(plain.length){blocks.push({type:'text',text:plain.join('\n')});plain=[];}};
+ for(let i=0;i<lines.length;i++){
+  if(/^\s*(```|~~~)/.test(lines[i]))fenced=!fenced;
+  const header=tableCells(lines[i]),divider=i+1<lines.length?tableCells(lines[i+1]):[];
+  if(!fenced&&lines[i].includes('|')&&header.length>1&&divider.length===header.length&&divider.every(c=>/^:?-{3,}:?$/.test(c))){
+   flush();const rows=[];i+=2;while(i<lines.length&&lines[i].trim()&&lines[i].includes('|')){const cells=tableCells(lines[i]);if(cells.length!==header.length)break;rows.push(cells);i++;}i--;
+   blocks.push({type:'table',header,rows,align:divider.map(c=>c.startsWith(':')&&c.endsWith(':')?'center':c.endsWith(':')?'right':'left')});
+  }else plain.push(lines[i]);
+ }flush();return blocks;
+}
+export function renderMessageBody(body,text,formatted=true){
+ body.replaceChildren();for(const block of formatted?messageBlocks(text):[{type:'text',text}]){
+  if(block.type==='text'){const p=document.createElement('p');p.textContent=block.text;body.append(p);continue;}
+  const wrap=document.createElement('div');wrap.className='message-table-scroll';wrap.tabIndex=0;wrap.setAttribute('role','region');wrap.setAttribute('aria-label','Table');const table=document.createElement('table'),head=document.createElement('thead'),row=document.createElement('tr');
+  block.header.forEach((text,i)=>{const th=document.createElement('th');th.scope='col';th.textContent=text;th.style.textAlign=block.align[i];row.append(th);});head.append(row);table.append(head);const tbody=document.createElement('tbody');
+  for(const cells of block.rows){const tr=document.createElement('tr');cells.forEach((text,i)=>{const td=document.createElement('td');td.textContent=text;td.style.textAlign=block.align[i];tr.append(td);});tbody.append(tr);}table.append(tbody);wrap.append(table);body.append(wrap);
+ }
+}
+
 export function reconcileMessages(parent,items,label='Assistant') {
   let changed=false;
   items.forEach((item,index)=>{
     let article=parent.children[index];
-    if(!article){article=document.createElement('article');article.className='message';const role=document.createElement('h2');role.className='message-label sr-only';const body=document.createElement('p');body.className='message-body';article.append(role,body);parent.append(article);changed=true;}
+    if(!article){article=document.createElement('article');article.className='message';const role=document.createElement('h2');role.className='message-label sr-only';const body=document.createElement('div');body.className='message-body';article.append(role,body);parent.append(article);changed=true;}
     const role=item.role==='user'?'You':label,text=item.text||item.content||'';
     article.dataset.role=item.role;
     if(article.firstElementChild.textContent!==role)article.firstElementChild.textContent=role;
-    if(article.querySelector('.message-body').textContent!==text){article.querySelector('.message-body').textContent=text;changed=true;}
+    if(article._messageText!==text||article._messageRole!==item.role){renderMessageBody(article.querySelector('.message-body'),text,item.role==='assistant');article._messageText=text;article._messageRole=item.role;changed=true;}
   });
   while(parent.children.length>items.length){parent.lastElementChild.remove();changed=true;}
   return changed;

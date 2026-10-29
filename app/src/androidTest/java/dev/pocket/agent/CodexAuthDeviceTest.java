@@ -43,6 +43,26 @@ public class CodexAuthDeviceTest {
         assertEquals("Only the encrypted envelope may be retained",1,context().getSharedPreferences("provider-secrets",Context.MODE_PRIVATE).getAll().size());
     }
     /** Failure-only runner cleanup, even when the live test never reached its finally block. */
+    @Test public void webModelChangeRetainsVerifiedReasoningWithoutReimportingAccount() throws Exception {
+        Assume.assumeTrue("Synthetic credential tests require an emulator",CredentialStore.isEmulator());
+        CredentialStore credentials=new CredentialStore(context());JSONObject prior=credentials.get();
+        try {
+            credentials.save(account("slider-regression","slider-account"));
+            for(String effort:new String[]{"high","low","medium"}) {
+                JSONObject settings=MainActivity.webModelSettings(credentials.get());
+                assertFalse(settings.has("accessToken"));
+                settings.put("model","gpt-6-luna").put("modelSource","catalog")
+                        .put("reasoningEffort",effort).put("preferredReasoningEffort",effort)
+                        .put("reasoningEffortModel","gpt-6-luna")
+                        .put("reasoningEfforts",new JSONArray().put("low").put("medium").put("high"));
+                credentials.save(settings);
+                JSONObject saved=credentials.get();assertEquals(effort,saved.optString("reasoningEffort"));
+                assertEquals("gpt-6-luna",saved.optString("reasoningEffortModel"));
+                assertFalse(saved.optString("accessToken").isEmpty());
+            }
+        } finally {credentials.save(prior);}
+    }
+
     @Test public void clearProvisionedAccount() throws Exception {
         Assume.assumeTrue("Account cleanup requires an emulator",CredentialStore.isEmulator());
         CredentialStore credentials=new CredentialStore(context());credentials.signOutCodex();
