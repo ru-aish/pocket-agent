@@ -4,6 +4,11 @@ on:
     branches: [main, 'feat/**', 'fix/**']
   workflow_dispatch:
     inputs:
+      skip_emulator_tests:
+        description: Skip emulator validation for a manual APK build (device tests remain unvalidated)
+        required: false
+        default: false
+        type: boolean
       isolated_history:
         description: Build an isolated debug APK pair for USB history validation
         required: false
@@ -73,11 +78,13 @@ jobs:
           ./gradlew --no-daemon :app:assembleRelease :app:assembleDevelopment :app:assembleReleaseAndroidTest :app:lintRelease :fixture:assembleDebug
           ./gradlew --no-daemon -PdevEmulatorTest :app:assembleDevelopmentAndroidTest
       - name: Enable KVM hardware acceleration for emulator
+        if: inputs.skip_emulator_tests != true
         run: |
           test -c /dev/kvm
           sudo chmod 666 /dev/kvm
           test -r /dev/kvm && test -w /dev/kvm
       - name: Exercise voice and development MCP contracts on Android emulator
+        if: inputs.skip_emulator_tests != true
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
@@ -106,6 +113,9 @@ jobs:
             adb uninstall dev.pocket.agent || true
             adb uninstall dev.pocket.agent.test || true
             timeout 300 ./gradlew --no-daemon -PdevEmulatorTest :app:connectedDevelopmentAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=dev.pocket.agent.DevBridgeDeviceTest
+      - name: Record skipped emulator validation
+        if: inputs.skip_emulator_tests == true
+        run: echo "Emulator validation was explicitly skipped for this manual APK build. Device tests are unvalidated." >> "$GITHUB_STEP_SUMMARY"
       - name: Upload emulator test report
         if: always()
         uses: actions/upload-artifact@v6
