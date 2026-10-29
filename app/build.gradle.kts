@@ -26,8 +26,8 @@ android {
             "dev.pocket.agent.historyvalidation" else "dev.pocket.agent"
         minSdk = 31
         targetSdk = 36
-        versionCode = 30
-        versionName = "0.1.30-local-shell.1"
+        versionCode = 31
+        versionName = "0.1.31-local-shell.2"
         resValue("string", "app_name", if (providers.gradleProperty("uiPreview").isPresent) "Pocket Agent Preview" else "Pocket Agent")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("boolean", "DEVELOPMENT_TOOLS", "false")
