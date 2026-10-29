@@ -56,8 +56,10 @@ public class PhoneTargetDeviceTest {
                 try {
                     reader=ImageReader.newInstance(720,1280,PixelFormat.RGBA_8888,2);
                     reader.setOnImageAvailableListener(r->{try(Image frame=r.acquireLatestImage()) {}},new Handler(Looper.getMainLooper()));
+                    int flags=1|8|64|1024|2048|4096|16384|32768;
+                    if(android.os.Build.VERSION.SDK_INT>=34)flags|=1<<16;
                     display=context.getSystemService(DisplayManager.class).createVirtualDisplay("PocketChooserTest",720,1280,320,reader.getSurface(),
-                        1|8|64|1024|2048|4096|16384|32768);
+                        flags);
                 } finally {automation.dropShellPermissionIdentity();}
                 assertNotNull(display);
                 automation.adoptShellPermissionIdentity();
@@ -134,6 +136,11 @@ public class PhoneTargetDeviceTest {
         Matcher match=Pattern.compile(Pattern.quote(name)+"=(true|false)").matcher(text);
         return match.find()?Boolean.parseBoolean(match.group(1)):null;
     }
+    private int topFocusedDisplay() throws Exception {
+        Matcher match=Pattern.compile("mTopFocusedDisplayId=(\\d+)").matcher(shell("dumpsys window"));
+        assertTrue("Could not inspect Android's top focused display",match.find());
+        return Integer.parseInt(match.group(1));
+    }
     private static boolean emulator() {
         return android.os.Build.FINGERPRINT.startsWith("generic")
             ||android.os.Build.FINGERPRINT.contains("emulator")
@@ -195,6 +202,39 @@ public class PhoneTargetDeviceTest {
             String recents=shell("dumpsys activity recents");
             assertFalse("Worker fixture leaked into physical Recents after virtual-display teardown",recents.contains("dev.pocket.agent.fixture"));
         } finally {c.close();}
+    }
+
+    @Test public void android14FallbacksNeverLoseFocusIsolation() {
+        int required=(1<<14)|(1<<16);
+        for(int flags:ShellDisplayService.displayFlagChoices(34))
+            assertEquals("All Android 14+ display candidates must protect top focus",required,flags&required);
+        assertTrue(ShellDisplayService.hasFocusIsolation(34,(1<<11)|(1<<12)));
+        assertFalse(ShellDisplayService.hasFocusIsolation(34,1<<11));
+        assertFalse(ShellDisplayService.hasFocusIsolation(34,1<<12));
+        assertTrue(ShellDisplayService.hasFocusIsolation(33,0));
+    }
+
+    @Test public void virtualTypingDoesNotStealPhysicalTopFocus() throws Exception {
+        if(android.os.Build.VERSION.SDK_INT<34)return;
+        try(Chooser c=new Chooser("editable")) {
+            assertTrue("Device ignored focus-isolation flags",
+                ShellDisplayService.hasFocusIsolation(34,c.display.getDisplay().getFlags()));
+            assertEquals("Virtual activity stole physical top focus",Display.DEFAULT_DISPLAY,topFocusedDisplay());
+            Observation snapshot=c.observed("POCKET_AGENT_FIXTURE");
+            Node input=snapshot.nodes().stream().filter(n->n.description().equals("AGENT_INPUT")).findFirst().orElseThrow();
+            Result tapped=c.screen.execute(new Action(Kind.TAP,snapshot.snapshotId(),
+                (input.left()+input.right())/2,(input.top()+input.bottom())/2,
+                null,null,100,null,false,null,null,null));
+            assertEquals("dispatched",tapped.status());
+            assertEquals("Virtual tap stole physical top focus",Display.DEFAULT_DISPLAY,topFocusedDisplay());
+            snapshot=c.observed("POCKET_AGENT_FIXTURE");
+            Result typed=c.screen.execute(new Action(Kind.TYPE,snapshot.snapshotId(),null,null,null,null,
+                100,"Agent input stays private",true,null,null,new Selector(null,null,"AGENT_INPUT")));
+            assertEquals("verified",typed.status());
+            assertEquals("Virtual typing stole physical top focus",Display.DEFAULT_DISPLAY,topFocusedDisplay());
+            assertTrue(c.observed("POCKET_AGENT_FIXTURE").nodes().stream()
+                .anyMatch(n->n.text().equals("Agent input stays private")));
+        }
     }
 
     @Test public void focusingVirtualEditTextDoesNotShowImeOnPhysicalDisplay() throws Exception {

@@ -30,7 +30,9 @@ public final class ShellDisplayService extends IDisplayShell.Stub {
     private static final int PUBLIC=1, PRESENTATION=2, OWN_CONTENT=8;
     private static final int TOUCH=1<<6, ROTATE=1<<7, DESTROY_CONTENT=1<<8;
     private static final int TRUSTED=1<<10, OWN_GROUP=1<<11, ALWAYS_UNLOCKED=1<<12;
-    private static final int OWN_FOCUS=1<<14, DEVICE_GROUP=1<<15;
+    private static final int OWN_FOCUS=1<<14, DEVICE_GROUP=1<<15, NO_STEAL_TOP_FOCUS=1<<16;
+    // Display.getFlags() uses different bits from DisplayManager's creation flags.
+    private static final int DISPLAY_OWN_FOCUS=1<<11, DISPLAY_NO_STEAL_TOP_FOCUS=1<<12;
     private static final int DISPLAY_IME_POLICY_HIDE=2;
     private final Context context;
     private final Map<Integer,OwnedDisplay> displays=new LinkedHashMap<>();
@@ -66,6 +68,20 @@ public final class ShellDisplayService extends IDisplayShell.Stub {
         if(frameThread==null) {frameThread=new HandlerThread("pocket-display-frames");frameThread.start();}
         return new Handler(frameThread.getLooper());
     }
+    static int[] displayFlagChoices(int apiLevel) {
+        int required=PUBLIC|PRESENTATION|OWN_CONTENT|TOUCH|ROTATE|DESTROY_CONTENT|TRUSTED;
+        int grouped=required|OWN_GROUP|ALWAYS_UNLOCKED;
+        if(apiLevel>=34) {
+            // No compatibility fallback may let an off-screen agent steal the user's top focus.
+            int isolated=grouped|OWN_FOCUS|NO_STEAL_TOP_FOCUS;
+            return new int[]{isolated|DEVICE_GROUP,isolated,required|OWN_FOCUS|NO_STEAL_TOP_FOCUS};
+        }
+        return new int[]{grouped,required|OWN_GROUP,required};
+    }
+    static boolean hasFocusIsolation(int apiLevel,int displayFlags) {
+        int protection=DISPLAY_OWN_FOCUS|DISPLAY_NO_STEAL_TOP_FOCUS;
+        return apiLevel<34||(displayFlags&protection)==protection;
+    }
     @Override public synchronized int createDisplay(int width,int height,int dpi) {
         if(Process.myUid()!=2000 && Process.myUid()!=0) throw new SecurityException("Requires Shizuku shell/root user service");
         if(width<320 || width>1920 || height<320 || height>2560 || dpi<120 || dpi>640) throw new IllegalArgumentException("Invalid display dimensions");
@@ -77,10 +93,7 @@ public final class ShellDisplayService extends IDisplayShell.Stub {
                 // Drain producer frames without recording content or running a video encoder.
             } catch(IllegalStateException ignored) {}
         },frameHandler());
-        int required=PUBLIC|PRESENTATION|OWN_CONTENT|TOUCH|ROTATE|DESTROY_CONTENT|TRUSTED;
-        int extended=required|OWN_GROUP|ALWAYS_UNLOCKED;
-        if(Build.VERSION.SDK_INT>=34) extended|=OWN_FOCUS|DEVICE_GROUP;
-        int[] choices={extended,required|OWN_GROUP,required};
+        int[] choices=displayFlagChoices(Build.VERSION.SDK_INT);
         Exception last=null;
         try {
             DisplayManager dm=displayManager();
@@ -95,6 +108,11 @@ public final class ShellDisplayService extends IDisplayShell.Stub {
                     if(displays.containsKey(id)) {
                         display.release();
                         throw new IllegalStateException("Android reused an allocated display ID");
+                    }
+                    if(!hasFocusIsolation(Build.VERSION.SDK_INT,display.getDisplay().getFlags())) {
+                        display.release();
+                        last=new IllegalStateException("Android did not retain virtual display focus isolation");
+                        continue;
                     }
                     try {hideIme(id);}
                     catch(Exception imeFailure) {
