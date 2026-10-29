@@ -129,6 +129,10 @@ final class ShizukuDisplayClient implements AutoCloseable {
         catch(RemoteException e) {loseService();throw new ControlException(ControlException.Code.NOT_READY,"Shizuku display service disconnected");}
         catch(RuntimeException e) {throw new ControlException(ControlException.Code.NOT_READY,"Android rejected trusted display creation: "+e.getClass().getSimpleName());}
     }
+    org.json.JSONObject terminal(org.json.JSONObject args,String owner,int displayId) throws Exception {
+        try {return new org.json.JSONObject(require().terminal(args.toString(),owner,displayId));}
+        catch(RemoteException e) {loseService();throw new ControlException(ControlException.Code.RESULT_UNKNOWN,"Shell service disconnected; inspect session output before repeating commands");}
+    }
     boolean removeDisplay(int displayId) {
         IDisplayShell service=remote;
         if(service!=null) try {service.removeDisplay(displayId);return true;}

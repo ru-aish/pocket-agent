@@ -108,7 +108,7 @@ export class PocketRuntime {
     this.autonomy=new AutonomyEngine(this);
     const phoneTools=[...nativeTools(this,'placeholder').map(x=>x.name),...MEMORY_TOOL_NAMES,'send_message','request_voice_conversation',...AUTONOMY_TOOL_NAMES.filter(name=>name!=='notify_user')];
     this.registry.agents.set('phone-operator',{name:'phone-operator',description:'Performs bounded Android workflows and verifies native outcomes.',source:'project',systemPrompt:WORKER_PROMPT,tools:[...phoneTools,'subagent']});
-    this.registry.agents.set('researcher',{name:'researcher',description:'Reads phone capabilities and app data with no screen mutations.',source:'project',systemPrompt:'Read-only bounded worker. Report evidence and uncertainty.',tools:['phone_capabilities','phone_apps','phone_contacts','phone_calendars','phone_calendar_events','phone_notifications','phone_notification_read','phone_operation','memory_search','memory_profile','history_search','history_read','send_message','request_voice_conversation','subagent']});
+    this.registry.agents.set('researcher',{name:'researcher',description:'Researches phone capabilities and app data, with the general on-phone shell available when useful.',source:'project',systemPrompt:'Research worker. Report evidence and uncertainty. General shell access is available for the assigned work.',tools:['phone_shell','phone_capabilities','phone_apps','phone_contacts','phone_calendars','phone_calendar_events','phone_notifications','phone_notification_read','phone_operation','memory_save','memory_search','memory_profile','history_search','history_read','skill','send_message','request_voice_conversation','subagent']});
     this.registry.agents.set('autonomy-worker',{name:'autonomy-worker',description:'A dedicated bounded autonomous run.',source:'project',systemPrompt:AUTONOMOUS_WORKER_PROMPT,tools:this.autonomousGrant([])});
     this.reloadCredentials();
     void this.refreshMcpTools();
@@ -289,7 +289,7 @@ export class PocketRuntime {
     finally {this.dropPriorImages(conversation.conversationId);this.releaseScreen(conversation.conversationId);this.save();this.publish();}
   };
   private injectMemory(session:MobileSession,owner:string,query:string):void {
-    const initial=owner==='main'?DEFAULT_MAIN_PROMPT:this.autonomyOwner(owner).startsWith('auto:')?AUTONOMOUS_WORKER_PROMPT:(this.registry.agents.get('researcher') && session.agent.state.systemPrompt.startsWith('Read-only bounded worker')?'Read-only bounded worker. Report evidence and uncertainty.':WORKER_PROMPT);
+    const initial=owner==='main'?DEFAULT_MAIN_PROMPT:this.autonomyOwner(owner).startsWith('auto:')?AUTONOMOUS_WORKER_PROMPT:((session.agent.state.systemPrompt.startsWith('Read-only bounded worker')||session.agent.state.systemPrompt.startsWith('Research worker.'))?this.registry.agents.get('researcher')!.systemPrompt:WORKER_PROMPT);
     const messages=session.agent.state.messages;
     if(messages[0]?.role!=='system')throw Error('Memory injection requires a system transcript');
     const latestUser:any=messages.findLast((message:any)=>message.role==='user');
@@ -475,7 +475,7 @@ export class PocketRuntime {
   private autonomousGrant(approved:string[]):string[] {
     const reads=phoneSchemas.filter(s=>s.annotations?.readOnlyHint===true).map(s=>s.name);
     const known=new Set(phoneSchemas.map(s=>s.name));
-    return [...reads,...approved.filter(name=>known.has(name)), 'phone_screen','task','wakeup','notify_user','request_decision','runtime_status','skill','memory_search','memory_profile'];
+    return [...reads,...approved.filter(name=>known.has(name)), 'phone_shell','phone_screen','task','wakeup','notify_user','request_decision','runtime_status','skill','memory_save','memory_search','memory_profile'];
   }
   startAutonomous(run:any,task:any):AutonomousStartResult {
     if(this.shuttingDown||this.stoppingAll||this.runtime.listConversations().filter(c=>c.currentGeneration).length>=4)return;
@@ -520,6 +520,9 @@ export class PocketRuntime {
     const state=this.autonomy.snapshot(),run=state.runs.find((r:any)=>r.conversationId===owner),task=state.tasks.find((t:any)=>t.id===run?.taskId);
     if(this.call('autonomy.status',{})?.enabled===false)throw Error('Autonomous work is paused');
     if(!task||task.status==='cancelled'||task.status==='paused')throw Error('Autonomous task is no longer active');
+    // General shell access is a standing user grant for every agent, including
+    // unattended workers. Commands are not subjected to per-phone-action approval.
+    if(name==='phone_shell')return;
     const spec=phoneSchemas.find(s=>s.name===name);
     if(spec?.annotations?.readOnlyHint===true)return;
     if(task.status!=='active'||!run.approvedTools?.includes(name)||!(run.approvalExpiresAt>Date.now()))throw Error('This phone action needs a current user approval for this task');

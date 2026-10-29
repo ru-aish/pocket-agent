@@ -37,6 +37,7 @@ final class AgentDisplayCoordinator implements AutoCloseable {
     private boolean retryScheduled,closeWhenIdle;
     private int retryAttempt;
     private ShizukuDisplayClient client;
+    private boolean shellInUse;
 
     AgentDisplayCoordinator(Context context) {this.context=context.getApplicationContext();}
 
@@ -48,6 +49,18 @@ final class AgentDisplayCoordinator implements AutoCloseable {
         if(id<=0||!leases.containsValue(id)||client==null||!"ready".equals(client.status()))
             throw new ControlException(NOT_READY,"This private screen has finished or is unavailable");
         return Json.obj("displayId",id,"image",client.preview(id));
+    }
+
+    JSONObject terminal(JSONObject args,String owner,Object generation) throws Exception {
+        final ShizukuDisplayClient active;final Integer id;
+        synchronized(this) {
+            shellInUse=true;active=client();
+            id=leases.ownedBy(owner,generation)&&!leases.provisional(owner)?leases.get(owner):null;
+        }
+        JSONObject result=active.terminal(args,owner,id==null?-1:id);
+        if(id!=null)result.put("display_context",Json.obj("display_id",id,"width",720,"height",1280,"dpi",320,
+            "input_example","input -d "+id+" tap X Y","guidance","Use your assigned display for this task; shell commands are not display-filtered."));
+        return result;
     }
 
     synchronized JSONObject acquire(String owner,Object generation) throws ControlException {
@@ -259,7 +272,7 @@ final class AgentDisplayCoordinator implements AutoCloseable {
     }
 
     private void closeIfUnused() {
-        if(!closeWhenIdle||!retiring.isEmpty()||leases.size()!=0)return;
+        if(shellInUse||!closeWhenIdle||!retiring.isEmpty()||leases.size()!=0)return;
         closeWhenIdle=false;
         if(client!=null) {ShizukuDisplayClient closing=client;client=null;closing.close();}
     }

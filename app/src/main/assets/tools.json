@@ -871,5 +871,67 @@
     "annotations": {
       "readOnlyHint": false
     }
+  },
+  {
+    "name": "phone_shell",
+    "description": "General unrestricted Android shell on this phone through Shizuku; no PC/USB connection required. Available to main and every worker. Actions: context returns persistent workspace paths and assigned display; acquire/release manage a private display; exec starts arbitrary /system/bin/sh code asynchronously; poll reads combined output by byte offset and exit status; stop signals a session shell; capture returns a private-display image independently of accessibility; image returns an image at any shell-readable path. Commands may create/reuse scripts, files and other processes. There is no command allowlist or display filtering. Android shell UID permissions still apply. exec does not wait for completion: save session_id and poll; never repeat an uncertain command. Files in scripts_directory persist for future tasks. Each exec starts a new shell; use cwd and files for state. Environment includes POCKET_SHELL_HOME, POCKET_SCRIPTS_DIR, POCKET_WORK_DIR and POCKET_DISPLAY_ID/WIDTH/HEIGHT (empty without an assigned display). Use display-specific input commands for your allocated task. capture does not use phone_act snapshots or their expiry. Image coordinates use coordinate_width/height, not the resized image dimensions.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "context",
+            "acquire",
+            "release",
+            "exec",
+            "poll",
+            "stop",
+            "capture",
+            "image"
+          ]
+        },
+        "command": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100000
+        },
+        "cwd": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "session_id": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "display_id": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "path": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "max_image_dimension": {
+          "type": "integer",
+          "minimum": 256,
+          "maximum": 1600
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
   }
 ]
