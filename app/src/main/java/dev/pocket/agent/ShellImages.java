@@ -14,8 +14,9 @@ final class ShellImages {
         Bitmap scaled=Bitmap.createScaledBitmap(original,Math.max(1,(int)(original.getWidth()*scale)),Math.max(1,(int)(original.getHeight()*scale)),true);
         try {
             ByteArrayOutputStream bytes=new ByteArrayOutputStream();scaled.compress(Bitmap.CompressFormat.JPEG,75,bytes);
-            // Stay comfortably under Binder's transaction-size budget including JSON/base64 overhead.
-            if(bytes.size()>500_000)throw new IllegalArgumentException("Image exceeds Binder payload size; request a smaller max_image_dimension");
+            // AIDL parcels JSON strings as UTF-16: base64 costs about 8/3 of JPEG bytes.
+            // Leave room below Binder's shared 1 MiB buffer for the envelope and UI previews.
+            if(bytes.size()>300_000)throw new IllegalArgumentException("Image exceeds Binder payload size; request a smaller max_image_dimension");
             return Json.obj("image_width",scaled.getWidth(),"image_height",scaled.getHeight(),"coordinate_width",original.getWidth(),"coordinate_height",original.getHeight(),
                 "captured_at_ms",System.currentTimeMillis(),"images",Json.arr(Json.obj("mimeType","image/jpeg","data",Base64.encodeToString(bytes.toByteArray(),Base64.NO_WRAP))));
         } finally {if(scaled!=original)scaled.recycle();}
