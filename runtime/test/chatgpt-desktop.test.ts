@@ -27,9 +27,9 @@ test('desktop tool protocol rejects prose, unknown tools, malformed arguments an
   assert.equal(prompt.images.length,1);assert.ok(prompt.text.includes('Private instructions'));assert.ok(prompt.text.includes('[Attached image 1]'));assert.ok(!prompt.text.includes('eA=='));
 });
 
-function fixture(t:any,answer:(request:any,index:number)=>{text:string;toolCalls:any[]}|null,dropAtStart=false,nativeError=false) {
+function fixture(t:any,answer:(request:any,index:number)=>{text:string;toolCalls:any[]}|null,dropAtStart=false,nativeError=false,pauseUntilRebind=false) {
   const previous=globalThis.WebSocket;
-  const sockets=new Set<FakeSocket>();const requests:any[]=[];let stops=0;
+  const sockets=new Set<FakeSocket>();const requests:any[]=[];let stops=0,connections=0;let deferredFinish:(()=>void)|undefined;
   const native={
     get:async()=>({}),list:async()=>({}),
     models:async()=>({models:[{slug:'gpt-6-thinking',title:'Thinking',thinking_efforts:['standard','extended']},{slug:'gpt-disabled',disabled:true}]}),
@@ -41,7 +41,7 @@ function fixture(t:any,answer:(request:any,index:number)=>{text:string;toolCalls
         if(nativeError){args.onError({});return;}
         const text=args.request.messages[0].content.parts.at(-1).includes('Return your answer directly as text.')?response.text:JSON.stringify(response),conversation_id='fixture-conversation-'+requests.length;
         for(const length of [Math.floor(text.length/2),text.length])args.onUpdate({conversation_id,message:{id:'fixture-answer',author:{role:'assistant'},channel:'final',recipient:'all',content:{content_type:'text',parts:[text.slice(0,length)]},status:'finished_successfully',end_turn:length===text.length}});
-        args.onComplete({conversation_id});
+        if(pauseUntilRebind)deferredFinish=()=>args.onComplete({conversation_id});else args.onComplete({conversation_id});
       });
       return {cancel:()=>{stops++;}};
     },
@@ -50,13 +50,14 @@ function fixture(t:any,answer:(request:any,index:number)=>{text:string;toolCalls
   const context=vm.createContext({window,document:{querySelectorAll:()=>[]},AbortController,Map,Set,WeakSet,Symbol,Promise,Intl,Date,setTimeout,clearTimeout,URL,console});
   class FakeSocket extends EventTarget {
     static OPEN=1;readyState=0;
-    constructor(readonly url:any){super();sockets.add(this);queueMicrotask(()=>{this.readyState=1;this.dispatchEvent(new Event('open'));});}
+    constructor(readonly url:any){super();connections++;sockets.add(this);queueMicrotask(()=>{this.readyState=1;this.dispatchEvent(new Event('open'));});}
     send(raw:string){const msg=JSON.parse(raw);void(async()=>{
       let result:any={};
       try{
         if(msg.method==='Runtime.addBinding')window[msg.params.name]=(payload:string)=>{for(const socket of sockets)if(socket.readyState===1)socket.dispatchEvent(new MessageEvent('message',{data:JSON.stringify({method:'Runtime.bindingCalled',params:{name:msg.params.name,payload}})}));};
         else if(msg.method==='Runtime.evaluate')result={result:{value:await vm.runInContext(msg.params.expression,context)}};
         this.dispatchEvent(new MessageEvent('message',{data:JSON.stringify({id:msg.id,result})}));
+        if(pauseUntilRebind&&msg.params?.expression?.includes('s.binding='))setImmediate(()=>deferredFinish?.());
       }catch(error){this.dispatchEvent(new MessageEvent('message',{data:JSON.stringify({id:msg.id,result:{exceptionDetails:{text:String(error)}}})}));}
     })();}
     close(){if(this.readyState===3)return;this.readyState=3;sockets.delete(this);queueMicrotask(()=>this.dispatchEvent(new Event('close')));}
@@ -64,7 +65,7 @@ function fixture(t:any,answer:(request:any,index:number)=>{text:string;toolCalls
   globalThis.WebSocket=FakeSocket as any;
   const fetcher:typeof fetch=async(input,init)=>{assert.equal(String(input),config.endpoint+'/json/list');assert.equal(init?.redirect,'error');assert.equal(new Headers(init?.headers).get('authorization'),null);return Response.json([{type:'page',url:'app://-/index.html',webSocketDebuggerUrl:'ws://127.0.0.1:19238/devtools/page/ABC'}]);};
   t.after(()=>{for(const socket of [...sockets])socket.close();globalThis.WebSocket=previous;});
-  return {requests,fetcher,sockets,stops:()=>stops};
+  return {requests,fetcher,sockets,stops:()=>stops,connections:()=>connections};
 }
 
 test('desktop discovery uses the native catalog with standard and extended reasoning',{timeout:20000},async t=>{
@@ -121,4 +122,11 @@ test('recovery terminates a confirmed native failure instead of retrying it',{ti
   const f=fixture(t,()=>({text:'',toolCalls:[]}),true,true);
   const stream=await makeStream(config,{},'failed-worker')(modelFor(config,{}),{messages:[]},{fetch:f.fetcher,signal:t.signal});
   const result=await stream.result();assert.equal(result.stopReason,'error');assert.match(result.errorMessage||'',/inference failed/);assert.equal(f.requests.length,1);
+});
+
+
+test('late close events from the old connection cannot retire a recovered active stream',{timeout:10000},async t=>{
+  const f=fixture(t,()=>({text:'Resumed on the replacement socket.',toolCalls:[]}),true,false,true);
+  const stream=await makeStream(config,{},'active-recovery')(modelFor(config,{}),{messages:[]},{fetch:f.fetcher,signal:t.signal});
+  const result=await stream.result();assert.equal(result.stopReason,'stop',result.errorMessage);assert.equal(f.requests.length,1);assert.equal(f.connections(),2);
 });

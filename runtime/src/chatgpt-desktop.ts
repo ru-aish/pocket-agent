@@ -197,7 +197,7 @@ export function desktopStream(model:Model<any>,context:Context,owner:string,effo
     let prompt:ReturnType<typeof desktopPrompt>;
     let rawText='',visible='',thinking='',textIndex=-1,thinkingIndex=-1;
     let notify:()=>void=()=>{};
-    let disconnected=false;
+    let disconnected=false,connectionGeneration=0;
     const wait=()=>new Promise<void>(resolve=>{
       const timer=setTimeout(resolve,1000);
       notify=()=>{clearTimeout(timer);resolve();};
@@ -225,8 +225,9 @@ export function desktopStream(model:Model<any>,context:Context,owner:string,effo
     };
     let eventError:Error|undefined;
     const connect=async()=>{
-      disconnected=false;
+      disconnected=false;const generation=++connectionGeneration;
       cdp=await DesktopCdp.connect(model.baseUrl,(method,params)=>{
+        if(generation!==connectionGeneration)return;
         if(method==='disconnected'||method==='Runtime.executionContextsCleared'||method==='Inspector.detached'){disconnected=true;notify();return;}
         if(method!=='Runtime.bindingCalled'||params?.name!==binding)return;
         try{update(JSON.parse(params.payload));}catch(error){eventError=error instanceof Error?error:new Error('Desktop stream failed.');}notify();
