@@ -209,7 +209,7 @@ public final class SubscriptionVoiceActivationDeviceTest {
     @Test public void systemBackReturnsThroughMenusBeforeLeavingChat() throws Exception {
         var instrumentation = InstrumentationRegistry.getInstrumentation();
         Activity activity = instrumentation.startActivitySync(
-                new Intent(context(), MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+                new Intent(context(), MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK));
         try {
             WebView web = findWebView(activity.getWindow().getDecorView());
             assertNotNull(web);
@@ -239,7 +239,7 @@ public final class SubscriptionVoiceActivationDeviceTest {
             assertTrue(secrets.edit().remove("encrypted").commit());
             ctx.stopService(new Intent(ctx,SubscriptionVoiceService.class));
             Activity activity=InstrumentationRegistry.getInstrumentation().startActivitySync(
-                new Intent(ctx,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+                new Intent(ctx,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK));
             try {
                 java.lang.reflect.Field retained=MainActivity.class.getDeclaredField("pendingVoiceInvitation");retained.setAccessible(true);
                 java.lang.reflect.Method tap=MainActivity.class.getDeclaredMethod("toggleVoiceConversation");tap.setAccessible(true);
@@ -270,8 +270,9 @@ public final class SubscriptionVoiceActivationDeviceTest {
             if (Build.VERSION.SDK_INT >= 33)
                 InstrumentationRegistry.getInstrumentation().getUiAutomation()
                         .grantRuntimePermission(ctx.getPackageName(), Manifest.permission.POST_NOTIFICATIONS);
+            // A prior permission dialog can leave a task that NEW_TASK reuses without creating an Activity.
             Activity activity = InstrumentationRegistry.getInstrumentation().startActivitySync(
-                    new Intent(ctx, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+                    new Intent(ctx, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK));
             try {
                 WebView webView = findWebView(activity.getWindow().getDecorView());
                 assertNotNull("Main chat WebView must be present", webView);
