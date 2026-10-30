@@ -20,6 +20,8 @@ public class ProviderProfilesDeviceTest {
         Assume.assumeTrue("Protected provider test requires an emulator", CredentialStore.isEmulator());
         assertArrayEquals(new String[]{"standard", "extended"}, MainActivity.reasoningChoices(true, null,
                 "gpt-6-thinking", "", new String[0], CredentialStore.CHATGPT_DESKTOP));
+        assertEquals("extended", MainActivity.reasoningPreferenceAfterSelection(CredentialStore.CHATGPT_DESKTOP,
+                "gpt-6-thinking", "extended", "high", null, "", new String[0], true));
         for (String endpoint : new String[]{"http://100.64.0.1:19238", "http://100.127.255.254:19238", "http://127.0.0.1:19238"})
             CredentialStore.validateEndpoint(endpoint, CredentialStore.CHATGPT_DESKTOP);
         for (String endpoint : new String[]{"http://100.63.0.1:19238", "http://100.128.0.1:19238", "http://example.com:19238", "http://user@100.64.0.1:19238", "http://100.64.0.1:19238/path"}) {

@@ -171,7 +171,7 @@ test('mobile subagents inherit main reasoning and accept an explicit per-spawn r
  assert.equal(runtime.state().tasks[1].requestedConfig.thinking,'high');
 });
 
-test('desktop Standard and Extended thinking choices survive explicit and inherited worker spawning',async()=>{
+test('Standard and Extended thinking values survive explicit and inherited worker configuration',async()=>{
  const bridge=new Bridge();bridge.credentials={authMode:'scripted',model:'scripted',reasoningEffort:'extended'};
  const runtime=new PocketRuntime(bridge);const tool=runtime.main.agent.state.tools.find((t:any)=>t.name==='subagent')!;
  await tool.execute('desktop-standard',{action:'spawn',spawns:[{agent:'researcher',label:'Standard worker',prompt:'Read state',reasoning:'standard'}]});

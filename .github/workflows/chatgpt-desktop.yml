@@ -1,7 +1,7 @@
 name: ChatGPT desktop provider
 on:
   push:
-    branches: ['feat/chatgpt-desktop-provider']
+    branches: [main, 'feat/**', 'fix/**']
   workflow_dispatch:
 permissions:
   contents: read
@@ -27,9 +27,6 @@ jobs:
         with:
           name: chatgpt-desktop-provider-runtime
           path: acceptance/
-      - name: Native provider contract tests
-        run: timeout 100 node_modules/.bin/tsx --test test/chatgpt-desktop.test.ts
-        working-directory: runtime
       - name: Runtime and UI regression tests
         run: npm test && npm run build && npm run test:ui
         working-directory: runtime

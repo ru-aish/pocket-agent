@@ -3,6 +3,7 @@ import {makeStream,modelFor,type ProviderConfig,type ProviderCredentials} from '
 
 /** Tests a draft without replacing or persisting the active connection. */
 export async function validateConnection(credentials: ProviderCredentials, fetcher: typeof fetch = globalThis.fetch) {
+  const signal=AbortSignal.timeout(60000);
   const mode = credentials.authMode;
   if (!['chatgpt-desktop','nebius','opencode','openai','api-key','codex','codexRelay','codex-relay'].includes(mode ?? ''))
     throw new Error('Select an API-key provider to test.');
@@ -10,11 +11,11 @@ export async function validateConnection(credentials: ProviderCredentials, fetch
     endpoint:credentials.endpoint,model:credentials.model};
   if (mode!=='chatgpt-desktop' && !credentials.apiKey?.trim()) throw new Error('Enter an API key before testing.');
   const model = modelFor(config,credentials);
-  const models = await discoverProviderModels(config,credentials,fetcher);
+  const models = await discoverProviderModels(config,credentials,fetcher,signal);
   if (!models.some(entry=>entry.id === model.id)) throw new Error('The selected model is not in this key’s catalog. Choose an available model and test again.');
   const stream = await makeStream(config,credentials,'connection-test')(model,{
     messages:[{role:'user',content:[{type:'text',text:'Reply with OK.'}],timestamp:Date.now()}],
-  },{fetch:fetcher,signal:AbortSignal.timeout(60000)});
+  },{fetch:fetcher,signal});
   const result = await stream.result();
   if (result.stopReason === 'error' || result.stopReason === 'aborted') {
     // Do not return provider bodies or draft credentials through UI events/logs.

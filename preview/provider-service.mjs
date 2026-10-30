@@ -94,7 +94,7 @@ export async function createProviderService({directory,fetcher=fetch,wait=delay,
   function config(input){
     const id=provider(input.provider);const model=input.model||DEFAULTS[id];
     if(typeof model!=='string'||!/^[A-Za-z0-9._:/+@-]{1,160}$/.test(model))fail('Enter a valid model ID.');
-    const levels=new Set(['minimal','low','medium','high','xhigh','max','standard','extended']);
+    const levels=new Set(['minimal','low','medium','high','xhigh','max',...(id==='chatgpt-desktop'?['standard','extended']:[])]);
     const reasoningEffort=input.reasoning||'low';if(!levels.has(reasoningEffort))fail('Choose a valid reasoning effort.');
     const selected={mode:id,model,reasoningEffort,...(id==='chatgpt-desktop'?{endpoint:credentials(id).endpoint}:{})};
     const credential=credentials(id);credential.model=model;
@@ -102,7 +102,7 @@ export async function createProviderService({directory,fetcher=fetch,wait=delay,
     credential.modelSource=id==='codex-account'?'catalog':'manual';
     credential.reasoningEffortModel=proof?model:'';
     credential.reasoningEfforts=proof?.supportedReasoningLevels||[];
-    if(id==='codex-account'&&reasoningEffort!=='low'&&!credential.reasoningEfforts.includes(reasoningEffort))fail('Discover this model and choose a supported reasoning effort first.');
+    if(['codex-account','chatgpt-desktop'].includes(id)&&reasoningEffort!=='low'&&!credential.reasoningEfforts.includes(reasoningEffort))fail('Discover this model and choose a supported reasoning effort first.');
     return {selected,credential};
   }
   return {

@@ -14,8 +14,8 @@ export function mountConnection(parent,{provider,getConfig,onModel,voiceOnly=fal
   function render(state){
     clearTimeout(timer);root.replaceChildren();if(disposed)return;
     const configured=voiceOnly?state.voiceAccount:state.providers[provider]?.configured;
-    root.append(node('h3','connection-title',provider==='codex-account'?'Codex account':provider==='nebius'?'Nebius connection':'OpenCode connection'));
-    root.append(node('p','connection-state',configured?(provider==='codex-account'?`Signed in · tokens saved on this ${storagePlace}`:`Provider key saved on this ${storagePlace}`):'Not connected'));
+    root.append(node('h3','connection-title',provider==='codex-account'?'Codex account':provider==='nebius'?'Nebius connection':provider==='chatgpt-desktop'?'ChatGPT desktop connection':'OpenCode connection'));
+    root.append(node('p','connection-state',configured?(provider==='codex-account'?`Signed in · tokens saved on this ${storagePlace}`:provider==='chatgpt-desktop'?`Desktop endpoint saved on this ${storagePlace}`:`Provider key saved on this ${storagePlace}`):'Not connected'));
     if(provider==='codex-account'){
       if(state.auth.state==='pending'||state.auth.state==='starting'){
         root.append(node('p','connection-help','Open OpenAI’s sign-in page and enter this code. This window will update when authorization completes.'));

@@ -18,7 +18,7 @@ const MAX_PROVIDER_CATALOG_BYTES = 512 * 1024;
 const MAX_CODEX_CATALOG_BYTES = 4 * 1024 * 1024;
 const MODEL_ID = /^[A-Za-z0-9._:/+@-]{1,160}$/;
 const OPENCODE_NON_CHAT_FREE = new Set(['jev-1.13-free']);
-const REASONING_LEVEL_SET = new Set<string>(REASONING_EFFORTS);
+const REASONING_LEVEL_SET = new Set<string>(REASONING_EFFORTS.filter(value=>value!=='standard'&&value!=='extended'));
 
 function catalogReasoning(entry: any): Pick<CatalogModel,'supportedReasoningLevels'|'defaultReasoningLevel'> {
   if (!entry || typeof entry !== 'object') return {};
@@ -48,10 +48,11 @@ export async function discoverProviderModels(
   config: ProviderConfig,
   credentials: ProviderCredentials,
   fetcher: typeof fetch = globalThis.fetch,
+  signal?: AbortSignal,
 ): Promise<CatalogModel[]> {
   if (config.mode === 'scripted') return [{id: 'scripted', name: 'Scripted model'}];
   const current = modelFor(config, credentials); // Validates scheme/host/credential-free base URL.
-  if(current.provider==='chatgpt-desktop')return desktopModels(current.baseUrl,fetcher);
+  if(current.provider==='chatgpt-desktop')return desktopModels(current.baseUrl,fetcher,signal);
   const account = current.api === 'openai-codex-responses';
   const maxCatalogBytes = account ? MAX_CODEX_CATALOG_BYTES : MAX_PROVIDER_CATALOG_BYTES;
   const mode = credentials.authMode || config.mode || 'openai';

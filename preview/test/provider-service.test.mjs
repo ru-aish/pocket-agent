@@ -37,6 +37,8 @@ test('desktop profile validates its endpoint without requiring a key and preserv
   assert.deepEqual(drafts[1],{authMode:'chatgpt-desktop',endpoint:'http://100.64.0.2:19238',model:'gpt-6-instant'});
   assert.equal(service.status().providers['chatgpt-desktop'].configured,true);
   assert.equal(service.status().providers['chatgpt-desktop'].endpoint,'http://100.64.0.2:19238');
+  await assert.rejects(service.chat({provider:'chatgpt-desktop',reasoning:'extended',messages:[{role:'user',text:'Hello'}]}),/Discover this model/);
+  await assert.rejects(service.chat({provider:'nebius',reasoning:'extended',messages:[{role:'user',text:'Hello'}]}),/valid reasoning effort/);
   await service.disconnect('chatgpt-desktop');
   assert.equal(service.status().providers['chatgpt-desktop'].configured,false);
   assert.equal(service.status().providers.nebius.configured,true);

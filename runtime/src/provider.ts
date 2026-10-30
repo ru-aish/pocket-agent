@@ -7,7 +7,7 @@ import { streamSimple as codexStreamSimple } from '@earendil-works/pi-ai/api/ope
 import { AssistantMessageEventStream } from '@earendil-works/pi-ai/utils/event-stream';
 import { SCRIPT_MODEL, scriptedStream } from './scripted.js';
 import {CODEX_RESPONSES_URL,ensureCodexCredentials,redactProviderSecrets,type CodexCredentialInput} from './codex-auth.js';
-import {desktopEndpoint,desktopStream} from './chatgpt-desktop.js';
+import {DESKTOP_THINKING_EFFORTS,desktopEndpoint,desktopStream} from './chatgpt-desktop.js';
 import {codexFailure} from './codex-errors.js';
 export {registerCodexCredentialUpdater,redactProviderSecrets} from './codex-auth.js';
 
@@ -28,7 +28,7 @@ export interface ProviderCredentials extends CodexCredentialInput {
 type ProviderModel = Model<'openai-responses'> | Model<'openai-codex-responses'> | Model<'openai-completions'>;
 export const OPENCODE_BASE_URL = 'https://opencode.ai/inference/openai/v1';
 export const NEBIUS_BASE_URL = 'https://api.tokenfactory.nebius.com/v1';
-export const REASONING_EFFORTS = ['minimal','low','medium','high','xhigh','max','standard','extended'] as const;
+export const REASONING_EFFORTS = DESKTOP_THINKING_EFFORTS;
 export type ReasoningEffort = typeof REASONING_EFFORTS[number];
 export const DEFAULT_REASONING_EFFORT: ReasoningEffort = 'low';
 const REASONING_EFFORT_SET = new Set<string>(REASONING_EFFORTS);
@@ -249,7 +249,7 @@ export function makeStream(config: ProviderConfig, credentials: ProviderCredenti
       if(mode==='chatgpt-desktop') {
         const requested=reasoningOverride??config.reasoningEffort;
         const levels=supportedReasoning??(credentials.reasoningEffortModel===model.id?credentials.reasoningEfforts:undefined);
-        const effort=levels ? levels.includes(requested??'')?requested:levels.includes('standard')?'standard':undefined : requested;
+        const effort=levels ? levels.includes(requested??'')?requested:levels.includes('standard')?'standard':levels[0] : requested;
         return desktopStream(model,context,owner,effort,options);
       }
       let apiKey = credentials.apiKey;
@@ -258,14 +258,15 @@ export function makeStream(config: ProviderConfig, credentials: ProviderCredenti
       else if (mode === 'nebius' && !apiKey?.trim()) return failure(model,'Configure a Nebius API key before sending.');
       else if (!apiKey?.trim()) return failure(model,'Configure a provider credential before sending.');
       if (options?.signal?.aborted) return failure(model,'Request cancelled.',true);
+      const normalizeApiEffort=(value:unknown)=>value==='standard'||value==='extended'?DEFAULT_REASONING_EFFORT:normalizeReasoningEffort(value);
       const requestedReasoning = configurableReasoningMode(mode) && (owner === 'main' || reasoningOverride !== undefined)
-        ? normalizeReasoningEffort(reasoningOverride ?? config.reasoningEffort)
+        ? normalizeApiEffort(reasoningOverride ?? config.reasoningEffort)
         : DEFAULT_REASONING_EFFORT;
       const hasCatalogReasoning = Array.isArray(supportedReasoning);
       const advertisedReasoning = hasCatalogReasoning
-        ? supportedReasoning!.filter(value => REASONING_EFFORT_SET.has(value))
+        ? supportedReasoning!.filter(value => REASONING_EFFORT_SET.has(value)&&value!=='standard'&&value!=='extended')
         : Array.isArray(credentials.reasoningEfforts)
-          ? credentials.reasoningEfforts.filter(value => REASONING_EFFORT_SET.has(value))
+          ? credentials.reasoningEfforts.filter(value => REASONING_EFFORT_SET.has(value)&&value!=='standard'&&value!=='extended')
           : [];
       const manualModel = modelSource === 'manual' && credentials.model === model.id;
       const modelLevels = !manualModel && (hasCatalogReasoning || credentials.reasoningEffortModel === model.id)

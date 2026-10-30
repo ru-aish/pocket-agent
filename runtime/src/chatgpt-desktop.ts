@@ -3,7 +3,7 @@ import {normalizeContext,getCurrentTools,getCurrentSystemPrompt} from '@earendil
 import {AssistantMessageEventStream} from '@earendil-works/pi-ai/utils/event-stream';
 import type {AssistantMessage, Context, Model} from '@earendil-works/pi-ai';
 import {rendererDiscovery} from '../vendor/t3-chatgpt/renderer-discovery.js';
-import {normalizeStreamMessage, imageUploadDestination} from '../vendor/t3-chatgpt/protocol.js';
+import {normalizeStreamMessage, mergeFinalAnswer, imageUploadDestination} from '../vendor/t3-chatgpt/protocol.js';
 
 export interface NativeUpdate {
   kind: 'update'|'complete'|'error'|'disconnected';
@@ -34,6 +34,9 @@ export function desktopEndpoint(value: string|undefined): string {
     throw new Error('Use an HTTP(S) Tailscale IPv4 or loopback desktop endpoint without credentials or a path.');
   return url.origin;
 }
+
+export const DESKTOP_THINKING_EFFORTS=['minimal','low','medium','high','xhigh','max','standard','extended'] as const;
+const thinkingEfforts=new Set<string>(DESKTOP_THINKING_EFFORTS);
 
 class DesktopInferenceError extends Error {}
 
@@ -83,7 +86,14 @@ export class DesktopCdp {
       socket.addEventListener('open',open,{once:true});socket.addEventListener('error',error,{once:true});socket.addEventListener('close',error,{once:true});
       signal?.addEventListener('abort',abort,{once:true});if(signal?.aborted)abort();
     });
-    return new DesktopCdp(socket,onEvent);
+    const cdp=new DesktopCdp(socket,onEvent);
+    if(signal){
+      const abort=()=>{cdp.interruptPending();cdp.close();};
+      signal.addEventListener('abort',abort,{once:true});
+      socket.addEventListener('close',()=>signal.removeEventListener('abort',abort),{once:true});
+      if(signal.aborted)abort();
+    }
+    return cdp;
   }
   call(method:string,params:Record<string,unknown>={},timeout=90000):Promise<any> {
     if(this.socket.readyState!==WebSocket.OPEN)return Promise.reject(new Error('Desktop disconnected.'));
@@ -104,21 +114,23 @@ export class DesktopCdp {
   close(){this.socket.close();}
 }
 
-export async function desktopModels(endpoint:string,fetcher:typeof fetch=fetch) {
-  const cdp=await DesktopCdp.connect(endpoint,undefined,undefined,fetcher);
+export async function desktopModels(endpoint:string,fetcher:typeof fetch=fetch,signal:AbortSignal=AbortSignal.timeout(30000)) {
+  const cdp=await DesktopCdp.connect(endpoint,undefined,signal,fetcher);
   try {
     const raw=await cdp.evaluate(`(async()=>{${rendererDiscovery}\nconst r=await resolveClient();return collectModels(await r.client.models()).models;})()`);
     const entries=Array.isArray(raw)?raw:raw.models;
     if(!Array.isArray(entries))throw new Error('The desktop did not return a model catalog.');
     const seen=new Set<string>();
-    return entries.flatMap((entry:any)=>{
+    const models=entries.flatMap((entry:any)=>{
       const id=entry.slug??entry.id;
       if(entry.is_available===false||entry.visibility==='hide'||typeof id!=='string'||!/^[A-Za-z0-9._:/+@-]{1,160}$/.test(id)||seen.has(id))return [];
       seen.add(id);
-      const levels=Array.isArray(entry.thinking_efforts)?entry.thinking_efforts.filter((v:unknown)=>v==='standard'||v==='extended'):[];
+      const levels=Array.isArray(entry.thinking_efforts)?entry.thinking_efforts.filter((v:unknown)=>typeof v==='string'&&thinkingEfforts.has(v)):[];
       return [{id,name:typeof entry.name==='string'?entry.name:typeof entry.title==='string'?entry.title:id,
         ...(levels.length?{supportedReasoningLevels:levels,defaultReasoningLevel:levels[0]}:{})}];
     }).slice(0,1024);
+    if(!models.length)throw new Error('The desktop returned no available models.');
+    return models;
   } finally{cdp.close();}
 }
 
@@ -197,6 +209,14 @@ export function desktopStream(model:Model<any>,context:Context,owner:string,effo
     let cdp:DesktopCdp|undefined,conversationId:string|null=null,finished=false,submitted=false;
     let prompt:ReturnType<typeof desktopPrompt>;
     let rawText='',visible='',thinking='',textIndex=-1,thinkingIndex=-1;
+    const finalBlocks=new Map<string,string>(),thinkingBlocks=new Map<string,string>();
+    const mergeBlock=(blocks:Map<string,string>,event:NativeUpdate)=>{
+      const id=event.messageId??'default',previous=blocks.get(id),incoming=event.text??previous??'';
+      if(!previous||!previous.startsWith(incoming)||incoming.length>=previous.length)blocks.set(id,incoming);
+      const merged=[...blocks.values()].reduce((text,block)=>mergeFinalAnswer(text,block),'');
+      if(merged.length>2_000_000)throw new DesktopInferenceError('Desktop response exceeded its size limit.');
+      return merged;
+    };
     let notify:()=>void=()=>{};
     let disconnected=false,connectionGeneration=0;
     const wait=()=>new Promise<void>(resolve=>{
@@ -210,15 +230,14 @@ export function desktopStream(model:Model<any>,context:Context,owner:string,effo
       if(event.kind==='complete'){finished=true;return;}
       if(event.role!=='assistant'||event.hidden||(event.recipient&&event.recipient!=='all'))return;
       if(event.channel==='analysis') {
-        const next=event.text??'';if(!next.startsWith(thinking))return;
+        const next=mergeBlock(thinkingBlocks,event);if(!next.startsWith(thinking))return;
         if(thinkingIndex<0){thinkingIndex=output.content.length;output.content.push({type:'thinking',thinking:''});stream.push({type:'thinking_start',contentIndex:thinkingIndex,partial:output});}
         const delta=next.slice(thinking.length);thinking=next;(output.content[thinkingIndex] as any).thinking=next;
         if(delta)stream.push({type:'thinking_delta',contentIndex:thinkingIndex,delta,partial:output});
         return;
       }
       if(event.channel&&event.channel!=='final')return;
-      rawText=event.text??rawText;
-      if(rawText.length>2_000_000)throw new DesktopInferenceError('Desktop response exceeded its size limit.');
+      rawText=mergeBlock(finalBlocks,event);
       const next=prompt.tools.length?visibleText(rawText):rawText;
       if(!next.startsWith(visible))return;
       if(textIndex<0&&next){textIndex=output.content.length;output.content.push({type:'text',text:''});stream.push({type:'text_start',contentIndex:textIndex,partial:output});}
@@ -237,7 +256,14 @@ export function desktopStream(model:Model<any>,context:Context,owner:string,effo
     };
     const stop=async()=>{
       if(!submitted||!cdp)return;
-      await cdp.evaluate(`(async()=>{const cancelKey=Symbol.for('pocket.chatgpt.cancelled.v1');window[cancelKey] ||= new Map();window[cancelKey].set(${JSON.stringify(requestId)},Date.now());while(window[cancelKey].size>256)window[cancelKey].delete(window[cancelKey].keys().next().value);const states=window[Symbol.for('pocket.chatgpt.requests.v1')];const s=states?.get(${JSON.stringify(requestId)});if(!s)return false;s.cancelled=true;s.startup.abort();const handle=await Promise.resolve(s.handle).catch(()=>null);try{if(s.conversationId){const c=window[Symbol.for('terminal-mcp.chat-runtime.client.v5')];await c?.stopCompletion?.({conversation_id:s.conversationId,exclude_async_types:[]});}}finally{const client=window[Symbol.for('terminal-mcp.chat-runtime.client.v5')];if(handle?.streamRequestId)client?.cancelStream?.(handle.streamRequestId);}return true;})()`,5000).catch(()=>{});
+      const cancel=async(connection:DesktopCdp)=>connection.evaluate(`(async()=>{const cancelKey=Symbol.for('pocket.chatgpt.cancelled.v1');window[cancelKey] ||= new Map();window[cancelKey].set(${JSON.stringify(requestId)},Date.now());while(window[cancelKey].size>256)window[cancelKey].delete(window[cancelKey].keys().next().value);const states=window[Symbol.for('pocket.chatgpt.requests.v1')];const s=states?.get(${JSON.stringify(requestId)});if(!s)return false;s.cancelled=true;s.startup.abort();const handle=await Promise.resolve(s.handle).catch(()=>null);try{if(s.conversationId){const c=window[Symbol.for('terminal-mcp.chat-runtime.client.v5')];await c?.stopCompletion?.({conversation_id:s.conversationId,exclude_async_types:[]});}}finally{const client=window[Symbol.for('terminal-mcp.chat-runtime.client.v5')];if(handle?.streamRequestId)client?.cancelStream?.(handle.streamRequestId);}return true;})()`,5000);
+      let replacement:DesktopCdp|undefined;
+      try{
+        if(disconnected)throw new Error('Desktop disconnected.');
+        await cancel(cdp);
+      }catch{
+        try{replacement=await DesktopCdp.connect(model.baseUrl,undefined,AbortSignal.timeout(5000),fetcher);await cancel(replacement);}catch{}
+      }finally{replacement?.close();}
     };
     const abort=()=>{notify();cdp?.interruptPending();};signal.addEventListener('abort',abort,{once:true});
     try{
@@ -246,7 +272,7 @@ export function desktopStream(model:Model<any>,context:Context,owner:string,effo
       for(const image of prompt.images){signal.throwIfAborted();images.push(await uploadImage(cdp!,image,signal,fetcher));}
       signal.throwIfAborted();stream.push({type:'start',partial:output});
       const messageId=randomUUID();
-      const request={action:'next',model:model.id,...(effort==='standard'||effort==='extended'?{thinking_effort:effort}:{}),supported_encodings:['v1'],
+      const request={action:'next',model:model.id,...(effort&&thinkingEfforts.has(effort)?{thinking_effort:effort}:{}),supported_encodings:['v1'],
         timezone:Intl.DateTimeFormat().resolvedOptions().timeZone,timezone_offset_min:-new Date().getTimezoneOffset(),
         messages:[{id:messageId,author:{role:'user'},content:{content_type:images.length?'multimodal_text':'text',parts:[...images.map(image=>({content_type:'image_asset_pointer',asset_pointer:(image.id.startsWith('file_')?'sediment://':'file-service://')+image.id,width:image.width,height:image.height,size_bytes:image.size})),prompt.text]},
           create_time:Date.now()/1000,end_turn:null,recipient:'all',status:'finished_successfully',weight:1,...(images.length?{metadata:{attachments:images}}:{})}]};

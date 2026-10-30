@@ -590,7 +590,7 @@ public final class MainActivity extends androidx.activity.ComponentActivity impl
             String selectedEffort, String preferred, String[] advertised,
             String verifiedModel, String[] verifiedLevels, boolean explicitManualChoice) {
         if (mode.equals("openai") || mode.equals("codex")) return selectedEffort;
-        if (mode.equals(CredentialStore.CODEX_ACCOUNT)
+        if ((mode.equals(CredentialStore.CODEX_ACCOUNT) || mode.equals(CredentialStore.CHATGPT_DESKTOP))
                 && (explicitManualChoice || containsReasoningEffort(advertised, selectedEffort)
                 || hasPersistedReasoningProof(selectedModel, selectedEffort, verifiedModel, verifiedLevels))) return selectedEffort;
         return preferred;
