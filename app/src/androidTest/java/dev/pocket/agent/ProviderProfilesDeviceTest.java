@@ -37,6 +37,10 @@ public class ProviderProfilesDeviceTest {
             assertEquals("http://100.64.0.1:19238", store.get().getString("endpoint"));
             assertEquals("fixture-nebius-key", store.getProviderProfile(CredentialStore.NEBIUS).getString("apiKey"));
             assertEquals("", store.get().optString("apiKey"));
+            store.removeKeyProvider(CredentialStore.CHATGPT_DESKTOP);
+            assertEquals("scripted", store.get().getString("authMode"));
+            assertEquals("", store.getProviderProfile(CredentialStore.CHATGPT_DESKTOP).optString("endpoint"));
+            assertEquals("fixture-nebius-key", store.getProviderProfile(CredentialStore.NEBIUS).getString("apiKey"));
         } finally {
             SharedPreferences.Editor editor = prefs.edit();
             if (before == null) editor.remove("encrypted"); else editor.putString("encrypted", before);

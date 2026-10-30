@@ -38,7 +38,7 @@ try {
     const agent=new Agent({streamFn:(m,c,o)=>source(m,c,{...o,signal:AbortSignal.any([signal,...(o?.signal?[o.signal]:[])])}),initialState:{model:modelFor(config,{}),
       tools:[{name:'read_fixture',label:'Read fixture',description:'Return a synthetic test receipt.',parameters:Type.Object({}),execute:async()=>{calls++;return {content:[{type:'text',text:nonce}],details:{synthetic:true}};}}]}});
     await agent.prompt('Call read_fixture exactly once, then report its exact returned receipt. Do not invent the receipt.');
-    const final:any=agent.state.messages.at(-1);report.toolCalls=calls;report.final={stopReason:final.stopReason,errorMessage:final.errorMessage,text:messageText(final)};assert.equal(final.stopReason,'stop',final.errorMessage);assert.equal(calls,1);assert.ok(messageText(final).includes(nonce));report.realToolRoundtrip=true;
+    const final:any=agent.state.messages.at(-1);report.toolCalls=calls;report.final={desktop:final.desktop,stopReason:final.stopReason,errorMessage:final.errorMessage,text:messageText(final)};assert.equal(final.stopReason,'stop',final.errorMessage);assert.equal(calls,1);assert.ok(messageText(final).includes(nonce));report.realToolRoundtrip=true;
   } else if(stage==='parallel'){
     const main=randomUUID(),worker=randomUUID();
     const results=await Promise.all([text('Reply exactly '+main,'acceptance-main'),text('Reply exactly '+worker,'acceptance-worker')]);

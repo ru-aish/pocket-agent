@@ -20,6 +20,7 @@ test('desktop tool protocol rejects prose, unknown tools, malformed arguments an
   const tools=[{name:'phone_capabilities',description:'Read capabilities',parameters:Type.Object({})}];
   assert.deepEqual(parseDesktopAnswer('{"text":"Checking","toolCalls":[{"name":"phone_capabilities","arguments":{}}]}',tools).toolCalls[0].arguments,{});
   for(const text of ['Done','```json\n{}\n```','{"text":"done","toolCalls":[{"name":"shell","arguments":{}}]}','{"text":"done","toolCalls":[{"name":"phone_capabilities","arguments":[]}]}',JSON.stringify({text:'',toolCalls:Array(33).fill({name:'phone_capabilities',arguments:{}})})])assert.throws(()=>parseDesktopAnswer(text,tools));
+  assert.deepEqual(parseDesktopAnswer('```json\n{"text":"Read_fixture","toolCalls":[]}\n```',tools),{text:'Read_fixture',toolCalls:[]});
   const prompt=desktopPrompt({systemPrompt:'Private instructions',tools,messages:[{role:'user',content:[{type:'image',data:'eA==',mimeType:'image/png'},{type:'text',text:'Read the code.'}],timestamp:1}]});
   const normalized=desktopPrompt({messages:[{role:'system',content:'Resolved policy',toolsAdded:tools,timestamp:0},{role:'system',content:'New policy section',toolsRemoved:[{name:'phone_capabilities'}],timestamp:1}]});
   assert.deepEqual(normalized.tools,[]);assert.ok(normalized.text.includes('Resolved policy'));assert.ok(normalized.text.includes('New policy section'));

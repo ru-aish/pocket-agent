@@ -1269,7 +1269,7 @@ public final class MainActivity extends androidx.activity.ComponentActivity impl
             String enteredKey = newKey[0] == null ? "" : newKey[0].getText().toString().trim();
             String apiKey = savedProviderKeyForEndpoint(currentSaved[0], selectedMode,
                     endpoint.getText().toString(), enteredKey);
-            if (apiKey.isEmpty()) { toast("Enter an API key before discovering models"); return; }
+            if (!selectedMode.equals(CredentialStore.CHATGPT_DESKTOP) && apiKey.isEmpty()) { toast("Enter an API key before discovering models"); return; }
             JSONObject draft = json("authMode", selectedMode, "endpoint", endpoint.getText().toString().trim(),
                     "model", model.getText().toString().trim(), "apiKey", apiKey);
             modelRequestId = Long.toHexString(System.nanoTime());
@@ -1711,7 +1711,8 @@ public final class MainActivity extends androidx.activity.ComponentActivity impl
                     }
                     // Compare the effective key after blank-field retention, not model/preferences.
                     // Re-entering the saved key also must not trigger an automatic request.
-                    if (!testOnly[0] && config.optString("apiKey").equals(saved.optString("apiKey"))) {
+                    if (!testOnly[0] && config.optString("apiKey").equals(saved.optString("apiKey"))
+                            && (!selectedMode.equals(CredentialStore.CHATGPT_DESKTOP) || matchesSavedConnection(saved, selectedMode, config.optString("endpoint"), ""))) {
                         saveConnection.run(); return;
                     }
                     if (connectionTestId != null) { toast("Connection test is already running"); return; }

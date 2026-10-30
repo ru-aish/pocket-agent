@@ -439,7 +439,7 @@ public final class CredentialStore {
         }
     }
     public void removeKeyProvider(String mode) throws Exception { synchronized(LOCK) {
-        if(!NEBIUS.equals(mode)&&!OPENCODE.equals(mode))throw new IllegalArgumentException("Choose a key provider");
+        if(!NEBIUS.equals(mode)&&!OPENCODE.equals(mode)&&!CHATGPT_DESKTOP.equals(mode))throw new IllegalArgumentException("Choose a key provider");
         JSONObject current=read(),profiles=current.optJSONObject(PROFILES);if(profiles==null)profiles=new JSONObject();profiles.remove(mode);
         if(mode.equals(current.optString("authMode"))){
             for(String field:new String[]{"apiKey","accessToken","refreshToken","accountId","expiresAt","idToken","modelSource","reasoningEffortModel","reasoningEfforts"})current.remove(field);
