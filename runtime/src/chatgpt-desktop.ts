@@ -280,10 +280,10 @@ export function desktopStream(model:Model<any>,context:Context,owner:string,effo
         stream.push({type:'toolcall_start',contentIndex,partial:output});stream.push({type:'toolcall_delta',contentIndex,delta:JSON.stringify(call.arguments),partial:output});stream.push({type:'toolcall_end',contentIndex,toolCall,partial:output});
       }
       output.stopReason=answer.toolCalls.length?'toolUse':'stop';stream.push({type:'done',reason:output.stopReason,message:output});stream.end(output);
-    }catch{
+    }catch(error){
       await stop();const aborted=!!options.signal?.aborted;output.stopReason=aborted?'aborted':'error';
       output.content=output.content.filter(part=>part.type!=='toolCall');
-      output.errorMessage=aborted?'Request cancelled.':signal.aborted?'Desktop request timed out. No prompt was resent; check Tailscale and desktop sign-in.':'Desktop inference or tool protocol failed. No tool was executed and no prompt was resent.';
+      output.errorMessage=aborted?'Request cancelled.':signal.aborted?'Desktop request timed out. No prompt was resent; check Tailscale and desktop sign-in.':error instanceof Error&&/^(Desktop |The desktop |The native |Unsupported desktop )/.test(error.message)?error.message:'Desktop inference or tool protocol failed. No tool was executed and no prompt was resent.';
       stream.push({type:'error',reason:aborted?'aborted':'error',error:output});stream.end(output);
     }finally{
       signal.removeEventListener('abort',abort);

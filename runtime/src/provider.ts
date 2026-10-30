@@ -246,7 +246,12 @@ export function makeStream(config: ProviderConfig, credentials: ProviderCredenti
     try {
       model = modelFor(config,credentials,_model?.id);
       if (options?.signal?.aborted) return failure(model,'Request cancelled.',true);
-      if(mode==='chatgpt-desktop')return desktopStream(model,context,owner,reasoningOverride??config.reasoningEffort,options);
+      if(mode==='chatgpt-desktop') {
+        const requested=reasoningOverride??config.reasoningEffort;
+        const levels=supportedReasoning??(credentials.reasoningEffortModel===model.id?credentials.reasoningEfforts:undefined);
+        const effort=levels ? levels.includes(requested??'')?requested:levels.includes('standard')?'standard':undefined : requested;
+        return desktopStream(model,context,owner,effort,options);
+      }
       let apiKey = credentials.apiKey;
       if (account) apiKey = (await ensureCodexCredentials(credentials,{signal:options?.signal,fetch:options?.fetch})).accessToken;
       else if (mode === 'opencode' && !apiKey?.trim()) return failure(model,'Configure an OpenCode Console service-account key before sending.');
