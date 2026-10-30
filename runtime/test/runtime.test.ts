@@ -171,6 +171,15 @@ test('mobile subagents inherit main reasoning and accept an explicit per-spawn r
  assert.equal(runtime.state().tasks[1].requestedConfig.thinking,'high');
 });
 
+test('desktop Standard and Extended thinking choices survive explicit and inherited worker spawning',async()=>{
+ const bridge=new Bridge();bridge.credentials={authMode:'scripted',model:'scripted',reasoningEffort:'extended'};
+ const runtime=new PocketRuntime(bridge);const tool=runtime.main.agent.state.tools.find((t:any)=>t.name==='subagent')!;
+ await tool.execute('desktop-standard',{action:'spawn',spawns:[{agent:'researcher',label:'Standard worker',prompt:'Read state',reasoning:'standard'}]});
+ await until(()=>runtime.state().tasks[0]?.status==='completed');assert.equal(runtime.state().tasks[0].requestedConfig.thinking,'standard');
+ await tool.execute('desktop-inherited',{action:'spawn',spawns:[{agent:'researcher',label:'Extended worker',prompt:'Read state'}]});
+ await until(()=>runtime.state().tasks[1]?.status==='completed');assert.equal(runtime.state().tasks[1].requestedConfig.thinking,'extended');
+});
+
 test('batch vision keeps only latest bounded image and preserves image-free operation receipts',()=>{
  const first='Zmlyc3Qtc2NyZWVu',latest='bGF0ZXN0LXNjcmVlbg==';
  const result=toolResult({status:'completed',results:[
