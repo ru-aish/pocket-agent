@@ -21,10 +21,12 @@ test('desktop tool protocol rejects prose, unknown tools, malformed arguments an
   assert.deepEqual(parseDesktopAnswer('{"text":"Checking","toolCalls":[{"name":"phone_capabilities","arguments":{}}]}',tools).toolCalls[0].arguments,{});
   for(const text of ['Done','```json\n{}\n```','{"text":"done","toolCalls":[{"name":"shell","arguments":{}}]}','{"text":"done","toolCalls":[{"name":"phone_capabilities","arguments":[]}]}',JSON.stringify({text:'',toolCalls:Array(33).fill({name:'phone_capabilities',arguments:{}})})])assert.throws(()=>parseDesktopAnswer(text,tools));
   const prompt=desktopPrompt({systemPrompt:'Private instructions',tools,messages:[{role:'user',content:[{type:'image',data:'eA==',mimeType:'image/png'},{type:'text',text:'Read the code.'}],timestamp:1}]});
+  const normalized=desktopPrompt({messages:[{role:'system',content:'Resolved policy',toolsAdded:tools,timestamp:0},{role:'system',content:'New policy section',toolsRemoved:[{name:'phone_capabilities'}],timestamp:1}]});
+  assert.deepEqual(normalized.tools,[]);assert.ok(normalized.text.includes('Resolved policy'));assert.ok(normalized.text.includes('New policy section'));
   assert.equal(prompt.images.length,1);assert.ok(prompt.text.includes('Private instructions'));assert.ok(prompt.text.includes('[Attached image 1]'));assert.ok(!prompt.text.includes('eA=='));
 });
 
-function fixture(t:any,answer:(request:any,index:number)=>{text:string;toolCalls:any[]}|null) {
+function fixture(t:any,answer:(request:any,index:number)=>{text:string;toolCalls:any[]}|null,dropAtStart=false) {
   const previous=globalThis.WebSocket;
   const sockets=new Set<FakeSocket>();const requests:any[]=[];let stops=0;
   const native={
@@ -33,6 +35,7 @@ function fixture(t:any,answer:(request:any,index:number)=>{text:string;toolCalls
     stopCompletion:async()=>{stops++;},cancelStream:()=>{},
     startCompletionStream:(args:any)=>{
       requests.push(args.request);const response=answer(args.request,requests.length);
+      if(dropAtStart&&requests.length===1)for(const socket of [...sockets])socket.close();
       if(response)queueMicrotask(()=>{
         const text=JSON.stringify(response),conversation_id='fixture-conversation-'+requests.length;
         for(const length of [Math.floor(text.length/2),text.length])args.onUpdate({conversation_id,message:{id:'fixture-answer',author:{role:'assistant'},channel:'final',recipient:'all',content:{content_type:'text',parts:[text.slice(0,length)]},status:'finished_successfully',end_turn:length===text.length}});
@@ -90,4 +93,23 @@ test('abort stops only its owned desktop request and releases the connection',{t
   const source=makeStream(config,{},'worker');const stream=await source(modelFor(config,{}),{messages:[]},{fetch:f.fetcher,signal:AbortSignal.any([controller.signal,t.signal])});
   for await(const event of stream){if(event.type==='start'){queueMicrotask(()=>controller.abort());break;}}
   const result=await stream.result();assert.equal(result.stopReason,'aborted');
+});
+
+
+test('a dropped native submission acknowledgement is recovered without resubmission',{timeout:20000},async t=>{
+  const f=fixture(t,()=>({text:'Recovered once.',toolCalls:[]}),true);
+  const stream=await makeStream(config,{},'recover')(modelFor(config,{}),{messages:[]},{fetch:f.fetcher,signal:t.signal});
+  const result=await stream.result();assert.equal(result.stopReason,'stop',result.errorMessage);assert.equal(f.requests.length,1);
+  assert.equal(result.content.find(part=>part.type==='text')?.text,'Recovered once.');
+});
+
+test('main and worker streams retain distinct native request state',{timeout:20000},async t=>{
+  const f=fixture(t,request=>({text:request.messages[0].content.parts[0].match(/RAW_TOKEN=([A-Z]+)/)?.[1]||'missing',toolCalls:[]}));
+  const run=async(owner:string,token:string)=>{
+    const stream=await makeStream(config,{},owner)(modelFor(config,{}),{messages:[{role:'user',content:[{type:'text',text:'RAW_TOKEN='+token}],timestamp:1}]},{fetch:f.fetcher,signal:t.signal});
+    return stream.result();
+  };
+  const [main,worker]=await Promise.all([run('main','ALPHA'),run('worker','BRAVO')]);
+  assert.equal(main.stopReason,'stop',main.errorMessage);assert.equal(worker.stopReason,'stop',worker.errorMessage);
+  assert.equal(main.content.find(part=>part.type==='text')?.text,'ALPHA');assert.equal(worker.content.find(part=>part.type==='text')?.text,'BRAVO');assert.equal(f.requests.length,2);
 });

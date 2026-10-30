@@ -1,4 +1,5 @@
 import {createHash, randomUUID} from 'node:crypto';
+import {normalizeContext,getCurrentTools,getCurrentSystemPrompt} from '@earendil-works/pi-ai/utils/transcript';
 import {AssistantMessageEventStream} from '@earendil-works/pi-ai/utils/event-stream';
 import type {AssistantMessage, Context, Model} from '@earendil-works/pi-ai';
 import {rendererDiscovery} from '../vendor/t3-chatgpt/renderer-discovery.js';
@@ -123,16 +124,19 @@ Respond with exactly one JSON object, without Markdown fences: {"text":"your use
 
 export function desktopPrompt(context:Context) {
   const images:Array<{data:string;mimeType:string}>=[];
-  const messages=context.messages.map((message:any)=>({role:message.role,
+  const transcript=normalizeContext(context);
+  const tools=getCurrentTools(transcript.messages);
+  const systemPrompt=getCurrentSystemPrompt(transcript.messages);
+  const messages=transcript.messages.filter(message=>message.role!=='system').map((message:any)=>({role:message.role,
     ...(message.toolName?{toolName:message.toolName,toolCallId:message.toolCallId,isError:message.isError}:{}),
     content:typeof message.content==='string'?message.content:message.content?.map((part:any)=>{
       if(part.type!=='image')return part;
       const index=images.push({data:part.data,mimeType:part.mimeType});return {type:'text',text:`[Attached image ${index}]`};
     })}));
-  const payload=JSON.stringify({systemPrompt:context.systemPrompt??'',tools:context.tools??[],messages});
+  const payload=JSON.stringify({systemPrompt,tools,messages});
   if(payload.length>2_000_000)throw new Error('Desktop context limit reached. Saved conversation was retained; start a new chat.');
   if(images.length>8)throw new Error('Desktop accepts at most eight images per inference request.');
-  return {text:envelopeInstruction+'\n\nPocketAgent context:\n'+payload,images};
+  return {text:envelopeInstruction+'\n\nPocketAgent context:\n'+payload,images,tools};
 }
 
 export function parseDesktopAnswer(text:string,tools:Context['tools']) {
@@ -271,7 +275,7 @@ export function desktopStream(model:Model<any>,context:Context,owner:string,effo
         }else await wait();
       }
       if(eventError)throw eventError;
-      const answer=parseDesktopAnswer(rawText,context.tools);
+      const answer=parseDesktopAnswer(rawText,prompt.tools);
       if(thinkingIndex>=0)stream.push({type:'thinking_end',contentIndex:thinkingIndex,content:thinking,partial:output});
       if(textIndex<0&&answer.text){textIndex=output.content.length;output.content.push({type:'text',text:answer.text});stream.push({type:'text_start',contentIndex:textIndex,partial:output});stream.push({type:'text_delta',contentIndex:textIndex,delta:answer.text,partial:output});}
       if(textIndex>=0){(output.content[textIndex] as any).text=answer.text;stream.push({type:'text_end',contentIndex:textIndex,content:answer.text,partial:output});}
