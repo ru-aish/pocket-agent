@@ -13,8 +13,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 12
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: '22.22.2'
           cache: npm
@@ -23,7 +23,7 @@ jobs:
         working-directory: runtime
       - name: Bundle provider for isolated VPS acceptance checks
         run: runtime/node_modules/.bin/esbuild runtime/src/provider.ts runtime/src/model-catalog.ts runtime/test/chatgpt-desktop.acceptance.ts --bundle --platform=node --format=cjs --out-extension:.js=.cjs --outdir=acceptance --external:node:*
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: chatgpt-desktop-provider-runtime
           path: acceptance/
