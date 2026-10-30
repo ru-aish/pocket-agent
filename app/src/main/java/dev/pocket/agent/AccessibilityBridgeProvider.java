@@ -114,6 +114,7 @@ public final class AccessibilityBridgeProvider extends ContentProvider {
                 return observation(backend.observe(extras.getBoolean("includeImage"),extras.getInt("maxImageDimension"),extras.getInt("maxNodes")));
             if("noteInteraction".equals(method)) {backend.noteInteraction(extras.getLong("eventTime"));return new Bundle();}
             if("validate".equals(method)) {backend.validateAction(action(extras));return new Bundle();}
+            if("prepareKeyboardText".equals(method)) {backend.prepareKeyboardText(action(extras));return new Bundle();}
             if("execute".equals(method)) {
                 ControlBackend.Result result=backend.execute(action(extras));Bundle out=new Bundle();out.putString("status",result.status());out.putString("message",result.message());return out;
             }

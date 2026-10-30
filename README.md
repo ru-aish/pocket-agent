@@ -6,6 +6,23 @@ An Android assistant that delegates phone work to background agents while you ke
 
 ## Install and connect
 
+### Mobile chat UI and private display viewing
+
+The app now packages the same phone-first interface used by the local browser
+companion: swipeable chat drawer, short conversation titles, writable previous
+chats, a compact composer, and separate subagent threads. Settings includes
+provider sign-in/model discovery, system/Groq/Deepgram voice options, phone
+permissions, MCP connections and background-work controls. Original advanced
+Android voice/account controls remain available.
+
+Open **Activity → Displays** to inspect three on-demand Shizuku slots and watch
+an active private screen without controlling it. Preview frames are requested
+only while that viewer is open. Private displays hold their own power-group lock
+while leased, so the physical display can remain off. Rich editors can use the
+explicit keyboard typing path and must be reopened to verify persistence.
+See [mobile UI validation and limitations](docs/MOBILE_UI_VALIDATION.md) and
+[running the local companion](preview/README.md).
+
 Requires **Android 12 or later**. This is a separate app, `dev.pocket.agent`, and does not replace Pocket MCP.
 
 1. Download a signed APK from a published release or the `pocket-agent-release` artifact of a successful Actions run. `Pocket-Agent-x86_64.apk` targets the emulator; `Pocket-Agent-arm64.apk` targets ARM64 phones. ARM64 execution is still unverified. A universal APK is also built.
@@ -25,7 +42,7 @@ Requires **Android 12 or later**. This is a separate app, `dev.pocket.agent`, an
 
 Settings also offers **Scripted model (local validation)**, which uses no cloud inference and is intended for the included fixture tests. It is not a general conversational model. Credentials are encrypted with Android Keystore; replace the saved key explicitly when switching providers. See [model connections](docs/AUTH.md).
 
-**Remote MCP servers:** Open Settings → **Remote MCP servers** to add, edit, enable, disable, test, discover tools from, or delete up to ten Streamable HTTP servers. Server URLs must use HTTPS. Optional authentication supports no auth, a bearer token, or up to eight custom headers; credentials share the Android Keystore encrypted store. OAuth is not available, so servers that require OAuth cannot be connected. MCP tools are available to the main assistant and phone-operator workers, but not the read-only researcher. Connect only servers you trust because their tools receive the arguments the model sends.
+**Remote MCP servers:** Open Settings → **Remote MCP servers** to add, edit, enable, disable, test, discover tools from, or delete up to ten Streamable HTTP servers. Server URLs must use HTTPS. Optional authentication supports no auth, a bearer token, or up to eight custom headers; credentials share the Android Keystore encrypted store. OAuth is not available, so servers that require OAuth cannot be connected. MCP tools are available to the main assistant and phone-operator workers, but not the researcher; every agent has the local general shell separately. Connect only servers you trust because their tools receive the arguments the model sends.
 
 ## Codex account testing on an emulator
 
@@ -47,12 +64,16 @@ Ask the assistant to save a schedule, a future wake-up, or a notification watch.
 Background work uses persistent jobs and dedicated workers on this phone;
 Android can delay execution. Open **Activity** to review runs, answer questions,
 approve a task's next phone actions, or pause/resume automation. **Stop all** also
-pauses future automation. Default unattended phone tools are read-only.
+pauses future automation. Default unattended direct phone tools are read-only; the general shell is available to every worker as a standing user grant.
 
 Settings exposes **Personal instructions** for preferences. Core operating
 instructions are source-owned in `runtime/src/prompts.ts` and are not editable or
 displayed in the app. Existing custom prompt text migrates to personal preferences.
 See [scheduled and autonomous work](docs/AUTONOMY.md) for tools and limits.
+
+## On-phone terminal
+
+The main assistant and every subagent also have `phone_shell`: a general Shizuku-backed terminal running entirely on the phone. It can execute arbitrary shell code, retain scripts for later tasks, inspect paged command output, and capture private-display images independently of accessibility. Commands have no allowlist or display filtering; agents receive their display context as guidance. Shizuku must be running and authorized. No PC or USB connection is required during use. See [shell setup, script reuse, and lifecycle](docs/SHELL.md).
 
 ## How it runs
 

@@ -19,10 +19,11 @@ final class DeviceTestAccess {
   UiAutomation automation=InstrumentationRegistry.getInstrumentation().getUiAutomation(UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES);
   automation.adoptShellPermissionIdentity("android.permission.WRITE_SECURE_SETTINGS");
   try {
-   String name="dev.pocket.agent/.AgentAccessibility";
+   android.content.ComponentName component=new android.content.ComponentName(c,AgentAccessibility.class);
+   String name=component.flattenToString();
    String current=Settings.Secure.getString(c.getContentResolver(),Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
    java.util.LinkedHashSet<String> others=new java.util.LinkedHashSet<>();
-   if(current!=null)for(String part:current.split(":"))if(!part.equals(name)&&!part.equals("dev.pocket.agent/dev.pocket.agent.AgentAccessibility")&&!part.isEmpty())others.add(part);
+   if(current!=null)for(String part:current.split(":"))if(!component.equals(android.content.ComponentName.unflattenFromString(part))&&!part.isEmpty())others.add(part);
    Settings.Secure.putString(c.getContentResolver(),Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,String.join(":",others));
    // Settings observers run asynchronously. Let the disabled state clear Android's crashed-service record.
    Thread.sleep(300);

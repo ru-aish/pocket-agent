@@ -87,12 +87,13 @@ test('saved memories enter model context automatically, without duplicating reca
   assert.equal(latest.split('Use existing GitHub branches').length-1,1);
   assert.equal(r.state().lastError,null);
 });
-test('saved memory data does not override tool grants for the read-only researcher',()=>{
+test('researchers can save script notes while memory data does not grant deletion',()=>{
   const b=new MemoryBridge(),r=new PocketRuntime(b);
   const researcher=r.registry.agents.get('researcher')!;
   assert.ok(researcher.tools!.includes('memory_search'));
   assert.ok(researcher.tools!.includes('memory_profile'));
-  assert.ok(!researcher.tools!.includes('memory_save'));
+  assert.ok(researcher.tools!.includes('memory_save'));
+  assert.ok(researcher.tools!.includes('phone_shell'));
   assert.ok(!researcher.tools!.includes('memory_forget'));
   assert.ok(researcher.tools!.includes('history_search'));
   assert.ok(researcher.tools!.includes('history_read'));

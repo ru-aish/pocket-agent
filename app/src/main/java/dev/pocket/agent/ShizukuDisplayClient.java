@@ -45,7 +45,7 @@ final class ShizukuDisplayClient implements AutoCloseable {
         this.disconnected=disconnected;
         this.removeServiceOnClose=removeServiceOnClose;
         args=new Shizuku.UserServiceArgs(new ComponentName(context,ShellDisplayService.class))
-            .daemon(false).tag("pocket-agent-displays").processNameSuffix("display").version(2);
+            .daemon(false).tag("pocket-agent-displays").processNameSuffix("display").version(BuildConfig.VERSION_CODE);
         Shizuku.addBinderReceivedListenerSticky(received);
         Shizuku.addBinderDeadListener(died);
     }
@@ -129,6 +129,10 @@ final class ShizukuDisplayClient implements AutoCloseable {
         catch(RemoteException e) {loseService();throw new ControlException(ControlException.Code.NOT_READY,"Shizuku display service disconnected");}
         catch(RuntimeException e) {throw new ControlException(ControlException.Code.NOT_READY,"Android rejected trusted display creation: "+e.getClass().getSimpleName());}
     }
+    org.json.JSONObject terminal(org.json.JSONObject args,String owner,int displayId) throws Exception {
+        try {return new org.json.JSONObject(require().terminal(args.toString(),owner,displayId));}
+        catch(RemoteException e) {loseService();throw new ControlException(ControlException.Code.RESULT_UNKNOWN,"Shell service disconnected; inspect session output before repeating commands");}
+    }
     boolean removeDisplay(int displayId) {
         IDisplayShell service=remote;
         if(service!=null) try {service.removeDisplay(displayId);return true;}
@@ -137,13 +141,17 @@ final class ShizukuDisplayClient implements AutoCloseable {
     }
     void launch(int displayId,String componentName) throws ControlException {
         try {if(!require().launchActivity(displayId,componentName))
-            throw new ControlException(ControlException.Code.ACTION_REJECTED,"No independent virtual task was opened. Android may require reusing an existing user or worker task; that task was preserved.");}
+            throw new ControlException(ControlException.Code.ACTION_REJECTED,"No private app session opened. Play Store can transfer an idle background task automatically, but a visible Store or another worker's task cannot be taken over. Other personal tasks are preserved.");}
         catch(RemoteException e) {loseService();throw new ControlException(ControlException.Code.NOT_READY,"Virtual display backend disconnected");}
     }
     void openUrl(int displayId,String url) throws ControlException {
         try {if(!require().openUrl(displayId,url))
-            throw new ControlException(ControlException.Code.ACTION_REJECTED,"Android did not resolve the URL on the virtual display");}
+            throw new ControlException(ControlException.Code.ACTION_REJECTED,"No private URL session opened. Google Play app-detail links automatically use an idle background Store session; a visible Store or another worker's task cannot be taken over. Do not fall back to the physical screen without user authorization.");}
         catch(RemoteException e) {loseService();throw new ControlException(ControlException.Code.NOT_READY,"Virtual display backend disconnected");}
+    }
+    String preview(int displayId) throws ControlException {
+        try {return require().previewDisplay(displayId);}
+        catch(RemoteException e){loseService();throw new ControlException(ControlException.Code.NOT_READY,"Private screen is no longer available");}
     }
     void showClock(int displayId,String screen) throws ControlException {
         try {if(!require().showClock(displayId,screen))
@@ -154,6 +162,10 @@ final class ShizukuDisplayClient implements AutoCloseable {
         try {if(!require().injectKey(displayId,code))
             throw new ControlException(ControlException.Code.ACTION_REJECTED,"Android rejected the virtual display key event");}
         catch(RemoteException e) {loseService();throw new ControlException(ControlException.Code.NOT_READY,"Virtual display backend disconnected");}
+    }
+    void text(int displayId,String text) throws ControlException {
+        try {if(!require().injectText(displayId,text))throw new ControlException(ControlException.Code.RESULT_UNKNOWN,"Keyboard input was not fully confirmed; observe before retrying");}
+        catch(RemoteException e) {loseService();throw new ControlException(ControlException.Code.RESULT_UNKNOWN,"Keyboard input connection lost; observe before retrying");}
     }
     boolean repairAccessibility(String componentName,boolean restoreMissing) throws ControlException {
         try {return require().repairAccessibility(componentName,restoreMissing);}

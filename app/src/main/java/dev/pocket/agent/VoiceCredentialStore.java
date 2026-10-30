@@ -14,16 +14,22 @@ import org.json.JSONObject;
 
 /** Separate Android Keystore envelope for voice credentials, independent of the model provider. */
 final class VoiceCredentialStore {
-    private static final String ALIAS = "pocket-agent-deepgram-v1";
     private final Context context;
-    VoiceCredentialStore(Context context) { this.context = context.getApplicationContext(); }
+    private final String alias, preferences, provider;
+    VoiceCredentialStore(Context context) { this(context, "deepgram"); }
+    VoiceCredentialStore(Context context, String provider) {
+        if (!provider.equals("deepgram") && !provider.equals("groq")) throw new IllegalArgumentException("Unsupported voice provider");
+        this.context = context.getApplicationContext(); this.provider = provider;
+        alias = "pocket-agent-" + provider + "-v1";
+        preferences = provider.equals("deepgram") ? "voice-credentials" : "groq-voice-credentials";
+    }
 
     private SecretKey key() throws Exception {
         KeyStore store = KeyStore.getInstance("AndroidKeyStore");
         store.load(null);
-        if (store.containsAlias(ALIAS)) return (SecretKey) store.getKey(ALIAS, null);
+        if (store.containsAlias(alias)) return (SecretKey) store.getKey(alias, null);
         KeyGenerator generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore");
-        generator.init(new KeyGenParameterSpec.Builder(ALIAS, KeyProperties.PURPOSE_ENCRYPT | KeyProperties.PURPOSE_DECRYPT)
+        generator.init(new KeyGenParameterSpec.Builder(alias, KeyProperties.PURPOSE_ENCRYPT | KeyProperties.PURPOSE_DECRYPT)
             .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
             .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE).build());
         return generator.generateKey();
@@ -32,7 +38,7 @@ final class VoiceCredentialStore {
     synchronized boolean configured() { return !read().isEmpty(); }
 
     synchronized String read() {
-        String saved = context.getSharedPreferences("voice-credentials", Context.MODE_PRIVATE)
+        String saved = context.getSharedPreferences(preferences, Context.MODE_PRIVATE)
             .getString("secret", null);
         if (saved == null) return "";
         try {
@@ -49,13 +55,13 @@ final class VoiceCredentialStore {
     synchronized void save(String apiKey) throws Exception {
         String value = apiKey == null ? "" : apiKey.trim();
         if (value.isEmpty() || value.length() > 512 || value.contains("\n") || value.contains("\r"))
-            throw new IllegalArgumentException("Enter a valid Deepgram API key");
+            throw new IllegalArgumentException("Enter a valid " + (provider.equals("groq") ? "Groq" : "Deepgram") + " API key");
         Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
         cipher.init(Cipher.ENCRYPT_MODE, key());
         JSONObject envelope = new JSONObject()
             .put("iv", Base64.encodeToString(cipher.getIV(), Base64.NO_WRAP))
             .put("data", Base64.encodeToString(cipher.doFinal(value.getBytes(StandardCharsets.UTF_8)), Base64.NO_WRAP));
-        if (!context.getSharedPreferences("voice-credentials", Context.MODE_PRIVATE)
+        if (!context.getSharedPreferences(preferences, Context.MODE_PRIVATE)
             .edit().putString("secret", envelope.toString()).commit())
             throw new IllegalStateException("Unable to save voice credentials");
     }

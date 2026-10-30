@@ -36,6 +36,24 @@ class Bridge implements NativeBridge {
   emit(_event:string):void{}
 }
 
+test('display status exposes assigned IDs, waiting work, and released leases for the chat UI',async()=>{
+  // Given: all three native display slots are occupied.
+  const bridge=new Bridge(),app=new PocketRuntime(bridge);
+  await Promise.all(['first','second','third'].map(owner=>app.ensureDisplay(owner)));
+  assert.equal(app.displayStatus('first').state,'active');
+  assert.equal(typeof app.displayStatus('first').displayId,'number');
+  // When: another task requests a display, then a slot becomes available.
+  const queued=app.ensureDisplay('fourth');
+  assert.equal(app.displayStatus('fourth').state,'waiting');
+  assert.equal(app.state().displays.waiting,1);
+  app.releaseScreen('first');await queued;
+  // Then: the waiting task receives a real ID and the released lease disappears.
+  assert.equal(app.displayStatus('fourth').state,'active');assert.equal(typeof app.displayStatus('fourth').displayId,'number');
+  assert.deepEqual(app.displayStatus('first'),{state:'idle',displayId:null});
+  assert.equal(app.state().displays.waiting,0);
+  for(const owner of ['second','third','fourth'])app.releaseScreen(owner);
+});
+
 test('strict FIFO capacity three; fourth waits, direct call bypasses, release resumes automatically',async()=>{
   const bridge=new Bridge(),app=new PocketRuntime(bridge);
   const execute=(owner:string,name:string,args:any={})=>nativeTools(app,owner).find(t=>t.name===name)!.execute('t',args);

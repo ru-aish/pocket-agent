@@ -66,22 +66,15 @@ public class LifecycleDeviceTest {
             for (Activity activity : activities) if (activity instanceof MainActivity) { result.set(activity); break; }
         }); return result.get();
     }
-    private View findText(View root, String value) {
-        if (root instanceof TextView && value.contentEquals(((TextView) root).getText())) return root;
-        if (root instanceof ViewGroup) {
-            ViewGroup group = (ViewGroup) root;
-            for (int i = 0; i < group.getChildCount(); i++) { View found = findText(group.getChildAt(i), value); if (found != null) return found; }
-        }
+    private android.webkit.WebView web(View root) {
+        if(root instanceof android.webkit.WebView)return (android.webkit.WebView)root;
+        if(root instanceof ViewGroup group)for(int i=0;i<group.getChildCount();i++){android.webkit.WebView found=web(group.getChildAt(i));if(found!=null)return found;}
         return null;
     }
-    private View findDescription(View root, String value) {
-        CharSequence description = root.getContentDescription();
-        if (description != null && value.contentEquals(description)) return root;
-        if (root instanceof ViewGroup) {
-            ViewGroup group = (ViewGroup) root;
-            for (int i = 0; i < group.getChildCount(); i++) { View found = findDescription(group.getChildAt(i), value); if (found != null) return found; }
-        }
-        return null;
+    private String evaluate(Activity activity,String script) throws Exception {
+        java.util.concurrent.CountDownLatch done=new java.util.concurrent.CountDownLatch(1);AtomicReference<String> result=new AtomicReference<>();
+        InstrumentationRegistry.getInstrumentation().runOnMainSync(()->web(activity.getWindow().getDecorView()).evaluateJavascript(script,value->{result.set(value);done.countDown();}));
+        assertTrue("WebView evaluation timed out",done.await(10,TimeUnit.SECONDS));return result.get();
     }
     private JSONObject command(RuntimeHost host, JSONObject command) throws Exception {
         JSONObject result = host.dispatch(command).get(10, TimeUnit.SECONDS);
@@ -196,18 +189,18 @@ public class LifecycleDeviceTest {
             assertEquals("New main thread must retain the personal instructions", custom, view().optString("personalInstructions"));
 
             Activity activity = resumedActivity(); assertNotNull(activity);
-            AtomicReference<View> fresh = new AtomicReference<>(), copy = new AtomicReference<>(), jump = new AtomicReference<>();
-            InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
-                View root = activity.findViewById(android.R.id.content);
-                fresh.set(findText(root, "New main thread")); copy.set(findText(root, "Copy history")); jump.set(findDescription(root, "Jump to latest message"));
-            });
-            assertNotNull("New main thread control missing", fresh.get());
-            assertNotNull("Copy history control missing", copy.get());
-            assertNotNull("Jump-to-bottom control missing", jump.get());
-            InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> copy.get().performClick());
+            command(h,action("send").put("text","copy main chat fixture"));
+            until("copy fixture completed",10000,()->!view().optBoolean("busy")&&view().optJSONArray("messages").length()>1);
+            until("WebView copy control ready",15000,()->"true".equals(evaluate(activity,"!!document.querySelector('#copy-chat')&&!document.querySelector('#copy-chat').disabled")));
+            evaluate(activity,"document.querySelector('#copy-chat').click()");
             ClipboardManager clipboard = context().getSystemService(ClipboardManager.class);
-            assertNotNull("Clipboard service missing", clipboard); assertTrue("Copy history did not publish a clip", clipboard.hasPrimaryClip());
-            ClipData clip = clipboard.getPrimaryClip(); assertNotNull(clip); assertTrue(clip.getItemAt(0).coerceToText(context()).toString().contains(custom));
+            assertNotNull("Clipboard service missing", clipboard);
+            until("Copy conversation published the main chat",5000,()->clipboard.hasPrimaryClip()&&clipboard.getPrimaryClip().getItemAt(0).coerceToText(context()).toString().contains("copy main chat fixture"));
+            String previous=view().optString("mainThreadId");
+            assertEquals("true",evaluate(activity,"!!document.querySelector('[data-action=new]')"));
+            evaluate(activity,"document.querySelector('[data-action=new]').click()");
+            until("New chat control cleared the main thread",10000,()->!previous.equals(view().optString("mainThreadId"))&&view().optJSONArray("messages").length()==0);
+            assertEquals("New chat must retain personal instructions",custom,view().optString("personalInstructions"));
 
             JSONObject synthetic = new JSONObject().put("provider", new JSONObject().put("mode", "openai").put("model", "safe-model").put("apiKey", "synthetic-secret"))
                     .put("messages", new JSONArray().put(new JSONObject().put("role", "user").put("text", "main-debug-message")))

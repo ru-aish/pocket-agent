@@ -76,10 +76,10 @@ final class AccessibilityProxyBackend implements ControlBackend {
     }
     private Bundle call(String method,Bundle extras) throws ControlException {
         extras.putInt("displayId",displayId);
-        boolean mutation="execute".equals(method)||"startActivity".equals(method);
+        boolean mutation="execute".equals(method)||"startActivity".equals(method)||"prepareKeyboardText".equals(method);
         long timeout=switch(method) {
             case "observe" -> extras.getBoolean("includeImage")?OBSERVE_IPC_TIMEOUT_MS:VALIDATE_IPC_TIMEOUT_MS;
-            case "validate" -> VALIDATE_IPC_TIMEOUT_MS;
+            case "validate", "prepareKeyboardText" -> VALIDATE_IPC_TIMEOUT_MS;
             case "execute" -> Math.max(VALIDATE_IPC_TIMEOUT_MS,EXECUTE_IPC_BASE_TIMEOUT_MS+Math.max(0,extras.getInt("durationMs",0)));
             default -> STATUS_IPC_TIMEOUT_MS;
         };
@@ -120,6 +120,7 @@ final class AccessibilityProxyBackend implements ControlBackend {
         finally {try {file.delete();}catch(RuntimeException ignored){}}
     }
     void validateAction(ControlBackend.Action action) throws ControlException {call("validate",action(action));}
+    void prepareKeyboardText(ControlBackend.Action action) throws ControlException {call("prepareKeyboardText",action(action));}
     void noteInteraction(long eventTime) throws ControlException {Bundle args=new Bundle();args.putLong("eventTime",eventTime);call("noteInteraction",args);}
     void startActivity(Intent intent) throws ControlException {
         if(displayId!=android.view.Display.DEFAULT_DISPLAY)

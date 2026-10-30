@@ -58,7 +58,7 @@
   },
   {
     "name": "phone_act",
-    "description": "Perform an Android screen action using a recent snapshot_id. display_target must match the observed snapshot and defaults to the private virtual display; use physical only when the user explicitly wants visible-screen control. Prefer exact unique semantic selectors for click/type/scroll. Enter uses real IME action. Input acceptance is not task completion. Reuse operation_id and identical arguments after network loss. operation_id must be phone_capabilities.operation_prefix + underscore + a unique 8..48 character nonce; reuse identical IDs and arguments after uncertain results.",
+    "description": "Perform an Android screen action using a recent snapshot_id. display_target must match the target used to obtain snapshot_id. Prefer exact semantic selectors. For rich note editors such as Google Keep, accessibility text replacement may appear without saving: click the intended field, observe, then type with input_method=keyboard and verify by reopening. Keyboard input supports up to 2000 representable characters on private displays; unsupported characters fail before typing, so use an acceptable transliteration when appropriate. replace defaults to true. Other typing uses accessibility. Enter uses real IME action. Input acceptance is not task completion. display_target defaults to private virtual; use physical only with explicit visible-screen authorization. operation_id must be phone_capabilities.operation_prefix + underscore + a unique 8..48 character nonce; reuse identical IDs and arguments after uncertain results.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -114,6 +114,11 @@
         },
         "replace": {
           "type": "boolean"
+        },
+        "input_method": {
+          "type": "string",
+          "enum": ["accessibility", "keyboard"],
+          "default": "accessibility"
         },
         "key": {
           "type": "string",
@@ -249,7 +254,7 @@
   },
   {
     "name": "phone_open_url",
-    "description": "Open a validated HTTP(S) URL via Android ACTION_VIEW. display_target defaults to the private agent display; set physical only when the user explicitly wants the URL shown on the visible device screen. Verify the actual browser after launch; not a page-read API.",
+    "description": "Open a validated HTTP(S) URL. Only on virtual displays, Google Play https://play.google.com/store/apps/details?id=PACKAGE links use the private Store session automatically: an idle background Store task transfers into the agent display and closes on phone_screen release. A visible Store or another worker's task cannot be taken over. Observe the app listing, tap Install, and verify installation with phone_apps. Other URLs and all physical-display URLs use Android ACTION_VIEW. display_target defaults to virtual; physical requires the user's explicit request. Verify the resulting screen after launch.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -865,6 +870,68 @@
     },
     "annotations": {
       "readOnlyHint": false
+    }
+  },
+  {
+    "name": "phone_shell",
+    "description": "General unrestricted Android shell on this phone through Shizuku; no PC/USB connection required. Available to main and every worker. Actions: context returns persistent workspace paths and assigned display; acquire/release manage a private display; exec starts arbitrary /system/bin/sh code asynchronously; poll reads combined output by byte offset and exit status; stop signals a session shell; capture returns a private-display image independently of accessibility; image returns an image at any shell-readable path. Commands may create/reuse scripts, files and other processes. There is no command allowlist or display filtering. Android shell UID permissions still apply. exec does not wait for completion: save session_id and poll; never repeat an uncertain command. Files in scripts_directory persist for future tasks. Each exec starts a new shell; use cwd and files for state. Environment includes POCKET_SHELL_HOME, POCKET_SCRIPTS_DIR, POCKET_WORK_DIR and POCKET_DISPLAY_ID/WIDTH/HEIGHT (empty without an assigned display). Use display-specific input commands for your allocated task. capture does not use phone_act snapshots or their expiry. Image coordinates use coordinate_width/height, not the resized image dimensions.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "context",
+            "acquire",
+            "release",
+            "exec",
+            "poll",
+            "stop",
+            "capture",
+            "image"
+          ]
+        },
+        "command": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100000
+        },
+        "cwd": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "session_id": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "display_id": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "path": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "max_image_dimension": {
+          "type": "integer",
+          "minimum": 256,
+          "maximum": 1600
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
     }
   }
 ]

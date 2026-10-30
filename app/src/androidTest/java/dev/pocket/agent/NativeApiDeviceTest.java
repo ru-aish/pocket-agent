@@ -17,6 +17,35 @@ import static org.junit.Assert.*;
 @RunWith(AndroidJUnit4.class)
 public class NativeApiDeviceTest {
     private Context context() {return InstrumentationRegistry.getInstrumentation().getTargetContext();}
+    @Test public void backgroundStoreHandoffNeverTakesVisibleOrWorkerTasks() {
+        String hidden="RootTask id=210 displayId=0 userId=0\n  taskId=210: com.android.vending/.MainActivity visible=false\n";
+        DisplayTaskSnapshot idle=DisplayTaskSnapshot.stacks(hidden);
+        assertEquals(java.util.Set.of(210),idle.backgroundStoreTasks(15));
+        assertTrue(DisplayTaskSnapshot.stacks(hidden.replace("visible=false","visible=true")).backgroundStoreTasks(15).isEmpty());
+        assertTrue(DisplayTaskSnapshot.stacks(hidden.replace("displayId=0","displayId=16")).backgroundStoreTasks(15).isEmpty());
+        assertTrue(DisplayTaskSnapshot.stacks(hidden+"  taskId=211: personal.app/.Editor visible=false\n").backgroundStoreTasks(15).isEmpty());
+        assertTrue(idle.packageOn("com.android.vending",0));
+        assertFalse(idle.packageOn("com.android.vending",15));
+        assertTrue(DisplayTaskSnapshot.stacks("Display #0 (activities from top to bottom):\n  RootTask #210\n").backgroundStoreTasks(15).isEmpty());
+    }
+    @Test public void onlyExactPlayStoreDetailsUrlsUseStoreSession() {
+        assertTrue(ShellDisplayService.isPlayStoreDetails(android.net.Uri.parse("https://play.google.com/store/apps/details?id=com.google.android.keep")));
+        for(String url:new String[]{"https://play.google.com.evil.test/store/apps/details?id=com.google.android.keep","https://play.google.com:123/store/apps/details?id=com.google.android.keep","https://play.google.com/store/apps/details?id=bad%3Bcommand","https://play.google.com/store/apps/details","http://play.google.com/store/apps/details?id=com.google.android.keep"})
+            assertFalse(url,ShellDisplayService.isPlayStoreDetails(android.net.Uri.parse(url)));
+    }
+    @Test public void chooserTargetsCannotReusePersonalSingletonTasks() {
+        assertFalse(ShellDisplayService.canLaunchTargetSeparately(android.content.pm.ActivityInfo.LAUNCH_SINGLE_TASK,true,true));
+        assertFalse(ShellDisplayService.canLaunchTargetSeparately(android.content.pm.ActivityInfo.LAUNCH_SINGLE_INSTANCE,false,false));
+        assertTrue(ShellDisplayService.canLaunchTargetSeparately(android.content.pm.ActivityInfo.LAUNCH_SINGLE_TASK,true,false));
+        assertTrue(ShellDisplayService.canLaunchTargetSeparately(android.content.pm.ActivityInfo.LAUNCH_MULTIPLE,true,true));
+    }
+    @Test public void idleVirtualDisplayIsReportedReadyInsteadOfBlocked() throws Exception {
+        JSONObject idle=AgentDisplayCoordinator.capabilityStatus("idle",0,"idle");
+        assertTrue(idle.getBoolean("available"));assertTrue(idle.getBoolean("shizuku_running"));assertTrue(idle.getBoolean("shizuku_authorized"));assertEquals("ready_on_demand",idle.getString("status"));assertEquals(0,idle.getInt("active"));
+        assertTrue(AgentDisplayCoordinator.capabilityStatus("disconnected",0,"idle").getBoolean("available"));
+        assertFalse(AgentDisplayCoordinator.capabilityStatus("permission_required",0,"permission_required").getBoolean("available"));
+        assertFalse(AgentDisplayCoordinator.capabilityStatus("shizuku_unavailable",0,"shizuku_unavailable").getBoolean("available"));
+    }
     @Test public void directApiValidationAndCalendarRead() throws Exception {
         NativeTools tools=new NativeTools(context());
         try {
@@ -88,7 +117,7 @@ public class NativeApiDeviceTest {
             boolean found=false;
             for(int n=0;n<25&&!found;n++) {
                 result=tools.execute("phone_notification_read",new JSONObject()
-                    .put("package_name","dev.pocket.agent").put("limit",30),"emulator-notification-tests");
+                    .put("package_name",c.getPackageName()).put("limit",30),"emulator-notification-tests");
                 JSONArray entries=result.optJSONArray("notifications");
                 if(entries!=null)for(int i=0;i<entries.length();i++)
                     if("Synthetic notification content".equals(entries.getJSONObject(i).optString("text")))found=true;
@@ -101,14 +130,14 @@ public class NativeApiDeviceTest {
                 .setContentText(longText).build());
             Thread.sleep(400);
             JSONObject first=tools.execute("phone_notification_read",new JSONObject()
-                .put("package_name","dev.pocket.agent").put("limit",50),"emulator-notification-tests");
+                .put("package_name",c.getPackageName()).put("limit",50),"emulator-notification-tests");
             assertFalse(first.toString(),first.optBoolean("isError"));
             assertTrue("Response exceeded embedded JS limit",first.toString().length()<32000);
             assertTrue("Expected bounded output to report truncation",first.optBoolean("truncated"));
             int offset=first.getInt("next_offset");
             assertTrue("Pagination must advance",offset>0);
             JSONObject second=tools.execute("phone_notification_read",new JSONObject()
-                .put("package_name","dev.pocket.agent").put("offset",offset).put("limit",50),"emulator-notification-tests");
+                .put("package_name",c.getPackageName()).put("offset",offset).put("limit",50),"emulator-notification-tests");
             assertTrue("Pagination must return further notifications",second.getJSONArray("notifications").length()>0);
         }finally {for(int i=0;i<=35;i++)manager.cancel(id+i);}
     }

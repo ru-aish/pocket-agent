@@ -326,6 +326,12 @@ ActivityTaskSupervisor state:
         equal(0,DisplayTaskSnapshot.activities(dump).taskDisplays.get(102));
         equal(Set.of(42),DisplayTaskSnapshot.activities(
             "Display #7 (activities from top to bottom):\n  RootTask #42: type=standard\n").onDisplay(7));
+        DisplayTaskSnapshot fallback=DisplayTaskSnapshot.activities(dump.replace(
+            "  * Task{ccc #201 type=standard A=12346:example.worker}",
+            "  * Task{ccc #201 type=standard A=12346:example.worker}\n    * Hist #0: ActivityRecord{abc u0 com.android.vending/.Main t201}\n      mVisibleRequested=true"));
+        equal(true,fallback.packageOn("com.android.vending",4));
+        equal(false,fallback.packageOn("com.android.vending",0));
+        equal(true,fallback.packageOutside("com.android.vending",0));
         String empty=dump.replace("  * Task{ccc #201 type=standard A=12346:example.worker}\n", "");
         equal(Set.of(),DisplayTaskSnapshot.activities(empty).onDisplay(4));
         // Changing display order, nested tasks and task references cannot change ownership.

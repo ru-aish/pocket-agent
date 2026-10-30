@@ -254,6 +254,27 @@ public final class AndroidScreenBackend implements ControlBackend {
     }
 
     public synchronized void validateAction(Action a) throws ControlException {prevalidateAction(a);}
+    public synchronized void prepareKeyboardText(Action a) throws ControlException {
+        Observation observed=prevalidateAction(a);
+        onMain(()->{
+            validateContext(observed);validateFreshness(observed);
+            AccessibilityNodeInfo root=freshRoot(),node=null;
+            try {
+                if(root==null)throw new ControlException(NOT_READY,"No active window");
+                node=targetNode(root,a);
+                if(!node.isEditable()||!node.isFocused())throw new ControlException(ACTION_REJECTED,"Click the intended editable field and observe before keyboard typing");
+                if(a.replace()) {
+                    int length=node.isShowingHintText()?0:text(node.getText()).length();
+                    Bundle selection=new Bundle();selection.putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT,0);selection.putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT,length);
+                    boolean alreadySelected=node.getTextSelectionStart()==0&&node.getTextSelectionEnd()==length;
+                    if(!alreadySelected&&(!node.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION,selection)||!node.refresh()
+                        ||node.getTextSelectionStart()!=0||node.getTextSelectionEnd()!=length))
+                        throw new ControlException(ACTION_REJECTED,"Could not confirm text selection; no keyboard text was sent");
+                }
+                return null;
+            } finally {if(node!=null)node.recycle();if(root!=null)root.recycle();}
+        });
+    }
 
     private Observation prevalidateAction(Action a) throws ControlException {
         if (a == null || a.kind() == null) throw new ControlException(INVALID_ARGUMENT,"Action kind required");
@@ -495,6 +516,11 @@ public final class AndroidScreenBackend implements ControlBackend {
             AccessibilityNodeInfo node=null,verifier=null;
             try {
                 node=targetNode(root,a);
+                if(!node.isFocused()) {
+                    if(!node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)||!node.refresh()||!node.isFocused())
+                        throw new ControlException(ACTION_REJECTED,"Editing focus was not confirmed; focus the field and observe before typing");
+                    validateContext(observed);
+                }
                 String existing=node.isShowingHintText()?"":text(node.getText());
                 int start=node.getTextSelectionStart(),end=node.getTextSelectionEnd();
                 start=start<0?existing.length():Math.min(start,existing.length());

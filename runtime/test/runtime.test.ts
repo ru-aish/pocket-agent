@@ -2,7 +2,7 @@ import {emptyAutonomy} from '../src/autonomy.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {PocketRuntime,NativeBridge,DEFAULT_MAIN_PROMPT} from '../src/runtime.js';
-import {delay} from '../src/scripted.js';
+import {delay,messageText} from '../src/scripted.js';
 import {AssistantMessageEventStream,validateToolArguments} from '@earendil-works/pi-ai';
 import {toolResult,MobileSubagentParams,nativeTools} from '../src/tools.js';
 import {SubagentParams,parseSubagentInvocation} from '../vendor/pi9/schema.js';
@@ -28,6 +28,43 @@ class Bridge implements NativeBridge {
 }
 async function until(fn:()=>any,timeout=4000):Promise<void>{const end=Date.now()+timeout;while(!fn()){if(Date.now()>end)throw new Error('Timed out');await delay(10);}}
 const command=(r:PocketRuntime,cmd:any)=>assert.equal(JSON.parse(r.dispatch(JSON.stringify(cmd))).ok,true);
+
+test('previous main chats reopen with their context and accept further messages',async()=>{
+ class ChatBridge extends Bridge {
+  readonly chats=new Map<string,Array<{role:'user'|'assistant';text:string;timestamp:number}>>();
+  override call(method:string,json:string):string {
+   if(method==='history.resume_main'){const request=JSON.parse(json) as {threadId:string};return JSON.stringify({ok:true,result:{messages:this.chats.get(request.threadId)??[]}});}
+   const result=super.call(method,json);
+   if(method==='store.save'){const request=JSON.parse(json) as {state:{mainThreadId:string;mainMessages:Array<{role:string;content:unknown;timestamp:number}>}};const messages:Array<{role:'user'|'assistant';text:string;timestamp:number}>=[];for(const message of request.state.mainMessages)if(message.role==='user'||message.role==='assistant')messages.push({role:message.role,text:messageText(message),timestamp:message.timestamp});this.chats.set(request.state.mainThreadId,messages);}
+   return result;
+  }
+ }
+ const bridge=new ChatBridge(),runtime=new PocketRuntime(bridge);const old=runtime.state().mainThreadId;
+ command(runtime,{action:'send',text:'Remember the blue boat'});await until(()=>!runtime.busy&&runtime.state().messages.some((m:{role:string})=>m.role==='assistant'));
+ command(runtime,{action:'new_main'});const newer=runtime.state().mainThreadId;
+ command(runtime,{action:'send',text:'A separate conversation'});await until(()=>!runtime.busy&&runtime.state().messages.some((m:{role:string})=>m.role==='assistant'));
+ command(runtime,{action:'open_main',threadId:old,requestId:'reopen-test'});
+ assert.equal(runtime.state().mainThreadId,old);assert.ok(runtime.state().messages.some((m:{text:string})=>m.text==='Remember the blue boat'));assert.ok(!runtime.state().messages.some((m:{text:string})=>m.text==='A separate conversation'));
+ command(runtime,{action:'send',text:'Continue our discussion'});await until(()=>!runtime.busy&&runtime.state().messages.some((m:{text:string;role:string})=>m.role==='assistant'&&m.text.includes('Continue our discussion')));
+ assert.ok(bridge.chats.get(old)?.some(m=>m.text==='Continue our discussion'));
+ command(runtime,{action:'open_main',threadId:newer});assert.ok(runtime.state().messages.some((m:{text:string})=>m.text==='A separate conversation'));
+});
+
+test('background worker results stay with their originating main chat after switching',async()=>{
+ const bridge=new Bridge(),runtime=new PocketRuntime(bridge);const original=runtime.state().mainThreadId;
+ command(runtime,{action:'send',text:'delegate delay=400'});await until(()=>runtime.state().tasks[0]?.status==='running'&&!runtime.busy);
+ const id=runtime.state().tasks[0].conversationId;command(runtime,{action:'new_main'});const current=runtime.state().mainThreadId;
+ await until(()=>runtime.state().tasks[0]?.status==='completed',8000);await delay(100);
+ assert.notEqual(current,original);assert.equal(runtime.state().messages.length,0);assert.equal(runtime.state().tasks[0].mainThreadId,original);assert.ok(runtime.state().workerMessages[id].length>0);
+ const restored=new PocketRuntime(bridge);assert.equal(restored.state().tasks[0].mainThreadId,original);assert.equal(restored.state().mainThreadId,current);
+});
+test('queued subagents retain their original chat when they start after a switch',async()=>{
+ const bridge=new Bridge(),runtime=new PocketRuntime(bridge,{maxExecuting:1,maxConversations:12});const original=runtime.state().mainThreadId;
+ const started=runtime.startTasks([{kind:'spawn',agent:'researcher',label:'First',prompt:'Read capabilities delay=150'},{kind:'spawn',agent:'researcher',label:'Queued',prompt:'Read capabilities delay=20'}],{initiatedBy:'user'});
+ assert.ok(started.starts.every((start:{ok:boolean})=>start.ok));command(runtime,{action:'new_main'});
+ await until(()=>runtime.state().tasks.every((task:{status:string})=>task.status==='completed'),8000);
+ assert.ok(runtime.state().tasks.every((task:{mainThreadId:string})=>task.mainThreadId===original));assert.equal(runtime.state().messages.length,0);
+});
 
 test('running provider adopts native voice rotations only for the same account and provider revision',async()=>{
  const now=Date.now(),account='shared-native-account';
@@ -467,7 +504,13 @@ test('new main thread clears old main delivery but retains a resumable worker',a
  assert.ok(internal.inbox.some((item:any)=>item.type==='completion'),'worker completion should be pending for the old main thread');
  assert.equal(runtime.runtime.conversation(id).generations.at(-1)!.receipts.model,false);
  const workerMessages=structuredClone(runtime.state().workerMessages);
- internal.inbox.push({type:'user',text:'stale queued user turn'});
+ internal.inbox.push({type:'user',text:'queued user turn'});
+ const queued=structuredClone(internal.inbox),thread=runtime.state().mainThreadId;
+ const rejectedSwitch=JSON.parse(runtime.dispatch(JSON.stringify({action:'new_main'})));
+ assert.equal(rejectedSwitch.ok,false);assert.match(rejectedSwitch.error,/queued messages/);
+ assert.deepEqual(internal.inbox,queued);assert.equal(runtime.state().mainThreadId,thread);
+ internal.mainPaused=false;await internal.pump();
+ await until(()=>!runtime.busy&&!internal.pumping&&!internal.inbox.length);
  command(runtime,{action:'new_main'});
  assert.deepEqual(runtime.state().messages,[]);assert.equal(runtime.state().mainTurns,0);assert.deepEqual(internal.inbox,[]);
  assert.equal(runtime.state().tasks[0].conversationId,id,'retained worker identity must survive a main-thread reset');
@@ -517,7 +560,7 @@ test('a rejected main reset preserves the queued inbox, receipts, and history id
  assert.deepEqual(internal.inbox,before.inbox);assert.deepEqual([...internal.delivered],before.delivered);
  assert.equal(runtime.state().mainThreadId,before.thread);
  assert.equal(runtime.runtime.conversation(id).generations.at(-1)!.receipts.model,before.receipt);
- bridge.fail=false;command(runtime,{action:'new_main'});
+ bridge.fail=false;internal.mainPaused=false;await internal.pump();await until(()=>!runtime.busy&&!internal.pumping&&!internal.inbox.length);command(runtime,{action:'new_main'});
 });
 test('archive identities survive restore but are never reused with a short worker ID',async()=>{
  const bridge=new Bridge(),runtime=new PocketRuntime(bridge);

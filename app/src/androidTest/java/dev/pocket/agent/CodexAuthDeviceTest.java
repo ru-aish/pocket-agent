@@ -331,6 +331,8 @@ public class CodexAuthDeviceTest {
             activity=(MainActivity)instrumentation.startActivitySync(new Intent(context(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
             MainActivity current=activity;
             runOnMainChecked(()->{
+                java.lang.reflect.Field advanced=MainActivity.class.getDeclaredField("showAllSettings");
+                advanced.setAccessible(true);advanced.setBoolean(current,true);
                 java.lang.reflect.Method settings=MainActivity.class.getDeclaredMethod("settings");
                 settings.setAccessible(true);settings.invoke(current);
             });
@@ -340,6 +342,10 @@ public class CodexAuthDeviceTest {
             EditText endpoint=(EditText)findDialogControl(root,"https://a.example.test/v1",true);
             EditText key=(EditText)findDialogControl(root,"API key / relay token (blank keeps saved value)",true);
             assertNotNull(endpoint);assertNotNull(key);
+            runOnMainChecked(()->{
+                assertTrue("API connection controls must be visible in Advanced settings",endpoint.isShown()&&key.isShown());
+                assertEquals("Advanced settings must start with the saved effort","high",pickedEffort(reasoning));
+            });
             for(boolean changeKey:new boolean[]{true,false}) {
                 EditText field=changeKey?key:endpoint;
                 runOnMainChecked(()->field.setText(changeKey?"temporary-ui-key":"https://b.example.test/v1"));

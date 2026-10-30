@@ -7,6 +7,7 @@ import { streamSimple as codexStreamSimple } from '@earendil-works/pi-ai/api/ope
 import { AssistantMessageEventStream } from '@earendil-works/pi-ai/utils/event-stream';
 import { SCRIPT_MODEL, scriptedStream } from './scripted.js';
 import {CODEX_RESPONSES_URL,ensureCodexCredentials,redactProviderSecrets,type CodexCredentialInput} from './codex-auth.js';
+import {codexFailure} from './codex-errors.js';
 export {registerCodexCredentialUpdater,redactProviderSecrets} from './codex-auth.js';
 
 export interface ProviderConfig {
@@ -125,6 +126,8 @@ function fixedCompletionsFetch(mode: string, fetcher: typeof fetch, requestSigna
 }
 
 const CODEX_INFERENCE_RETRIES = 3;
+export const CODEX_REQUEST_TIMEOUT_MS=600000;
+export const CODEX_STREAM_IDLE_TIMEOUT_MS=300000;
 const CODEX_INFERENCE_ATTEMPTS = 1 + CODEX_INFERENCE_RETRIES;
 const RETRYABLE_CODEX_STREAM_ERRORS = new Set(['server_error','internal_error','overloaded','service_unavailable','rate_limit_exceeded','upstream_error']);
 const RETRYABLE_HTTP = new Set([408,429,500,502,503,504]);
@@ -155,30 +158,40 @@ function retryWait(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 /** Inspect only a bounded error code, never expose provider bodies to Pi or stored diagnostics. */
-async function terminalCodexError(response: Response): Promise<boolean> {
-  if (!RETRYABLE_HTTP.has(response.status)) {await response.body?.cancel();return true;}
-  if (!response.body) return false;
+async function terminalCodexError(response: Response,budget:{error?:string},signal:AbortSignal): Promise<boolean> {
+  budget.error=codexFailure(response.status,undefined).message;
+  if (!response.body) return !RETRYABLE_HTTP.has(response.status);
   const reader = response.body.getReader();const chunks: Uint8Array[] = [];let size = 0;
   try {
     while (true) {
-      const next = await reader.read();if (next.done) break;
+      let timer:ReturnType<typeof setTimeout>|undefined,abort:()=>void=()=>{};
+      let next:ReadableStreamReadResult<Uint8Array>;
+      try {
+        next=await new Promise<ReadableStreamReadResult<Uint8Array>>((resolve,reject)=>{
+          abort=()=>reject(new Error('Codex error response interrupted'));
+          timer=setTimeout(()=>reject(new Error('Codex error response stalled')),5000);
+          signal.addEventListener('abort',abort,{once:true});
+          if(signal.aborted)abort();else reader.read().then(resolve,reject);
+        });
+      } finally {clearTimeout(timer);signal.removeEventListener('abort',abort);}
+      if (next.done) break;
       size += next.value.byteLength;
       if (size > 32768) return true;
       chunks.push(next.value);
     }
-    const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-    return ['insufficient_quota','usage_limit_reached','billing_hard_limit_reached','invalid_api_key','token_expired']
-      .includes(body?.error?.code) || ['insufficient_quota','usage_limit_reached','usage_not_included'].includes(body?.error?.type);
-  } catch {return false;}
-  finally {try {await reader.cancel();} catch {/* Discard remote diagnostics. */}}
+    const body:unknown = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    const failure=codexFailure(response.status,body);budget.error=failure.message;return failure.terminal;
+  } catch {return !RETRYABLE_HTTP.has(response.status);}
+  finally {try {void reader.cancel().catch(()=>{});} catch {/* Discard remote diagnostics. */}}
 }
 
-function fixedCodexFetch(fetcher: typeof fetch, budget: {attempts:number}, deadline: AbortSignal, requestSignal?: AbortSignal): typeof fetch {
+function fixedCodexFetch(fetcher: typeof fetch, budget: {attempts:number;error?:string}, deadline: AbortSignal, requestSignal?: AbortSignal): typeof fetch {
   return (async(input: any, init?: RequestInit)=>{
     if (String(input) !== CODEX_RESPONSES_URL) throw new Error('Unexpected Codex inference destination.');
     // A single wall-clock deadline covers transport retries, SSE restarts and
     // the response body; Pi's header-only signal is not sufficient alone.
-    const signal = AbortSignal.any([deadline,...(init?.signal?[init.signal]:[]),...(requestSignal?[requestSignal]:[])]);
+    const idle=new AbortController();
+    const signal = AbortSignal.any([deadline,idle.signal,...(init?.signal?[init.signal]:[]),...(requestSignal?[requestSignal]:[])]);
     // Retry only inference transport before successful headers. Pi never retries the
     // agent loop or streamed output, and credential refresh/persistence is outside here.
     let response!: Response;
@@ -188,16 +201,16 @@ function fixedCodexFetch(fetcher: typeof fetch, budget: {attempts:number}, deadl
       try {
         response = await fetcher(CODEX_RESPONSES_URL,{...init,redirect:'error',signal});
       } catch (error) {
+        budget.error=deadline.aborted?'Codex inference timed out. Check the phone connection and retry.':'Could not connect to Codex. Check the phone network and retry.';
         if (signal.aborted || !retryableNetwork(error) || budget.attempts===CODEX_INFERENCE_ATTEMPTS)
           throw new Error('Codex inference connection failed.');
         await retryWait(retryDelay(undefined,attempt),signal);
         continue;
       }
-      if (response.ok) break;
-      const terminal = await terminalCodexError(response);
+      if (response.ok) {budget.error=undefined;break;}
+      const terminal = await terminalCodexError(response,budget,signal);
       const delay = retryDelay(response.headers,attempt);
       if (signal.aborted) throw new Error('Codex inference interrupted.');
-      // Do not ignore a provider's long Retry-After or extend the shared 120s deadline.
       if (terminal || !RETRYABLE_HTTP.has(response.status) || budget.attempts===CODEX_INFERENCE_ATTEMPTS || delay>5000) {
         return new Response(JSON.stringify({error:{message:`Codex inference rejected the request (HTTP ${response.status}).`}}),{status:response.status,headers:{'content-type':'application/json'}});
       }
@@ -207,13 +220,15 @@ function fixedCodexFetch(fetcher: typeof fetch, budget: {attempts:number}, deadl
     const reader = response.body.getReader();let bytes = 0;
     const body = new ReadableStream<Uint8Array>({
       async pull(controller) {
+        const timer=setTimeout(()=>{budget.error='The Codex response stream stalled for five minutes. Retry the request; sign-in was not changed.';idle.abort();},CODEX_STREAM_IDLE_TIMEOUT_MS);
         try {
           const next = await reader.read();
           if (next.done) {controller.close();return;}
           bytes += next.value.byteLength;
-          if (bytes > 16*1024*1024) {await reader.cancel();throw new Error('Codex response exceeded its size limit.');}
+          if (bytes > 16*1024*1024) {budget.error='Codex response exceeded the mobile size limit.';await reader.cancel();throw new Error('Codex response exceeded its size limit.');}
           controller.enqueue(next.value);
-        } catch {controller.error(new Error('Codex event stream ended unexpectedly.'));}
+        } catch {budget.error??=deadline.aborted?'Codex inference timed out. Check the phone connection and retry.':'The Codex response stream disconnected. Retry the request.';controller.error(new Error('Codex event stream ended unexpectedly.'));}
+        finally {clearTimeout(timer);}
       },
       cancel: reason=>reader.cancel(reason),
     });
@@ -252,16 +267,16 @@ export function makeStream(config: ProviderConfig, credentials: ProviderCredenti
         ? modelLevels.includes(DEFAULT_REASONING_EFFORT) ? DEFAULT_REASONING_EFFORT : modelLevels[0]
         : !manualModel && !modelLevels.length && (account || modelSource === 'catalog')
           ? DEFAULT_REASONING_EFFORT : requestedReasoning;
-      const shared = {...options,apiKey,transport:'sse' as const,maxRetries:0,timeoutMs:120000,reasoning};
-      const budget = {attempts:0};
+      const shared = {...options,apiKey,transport:'sse' as const,maxRetries:0,timeoutMs:account?CODEX_STREAM_IDLE_TIMEOUT_MS:120000,reasoning};
+      const budget:{attempts:number;error?:string} = {attempts:0};
       // Credential refresh is deliberately outside this retry scope.
-      const deadline = account ? AbortSignal.timeout(120000) : undefined;
+      const deadline = account ? AbortSignal.timeout(CODEX_REQUEST_TIMEOUT_MS) : undefined;
       const retrySignal = account
         ? AbortSignal.any([deadline!,...(options?.signal?[options.signal]:[])])
         : undefined;
       const sourceFor = (onCodexEvent?: (event:any)=>void) => model!.api === 'openai-codex-responses'
         ? codexStreamSimple(model!,context,{
-            ...shared,fetch:fixedCodexFetch(options?.fetch ?? globalThis.fetch,budget,deadline!,options?.signal),
+            ...shared,signal:retrySignal,fetch:fixedCodexFetch(options?.fetch ?? globalThis.fetch,budget,deadline!,options?.signal),
             onProviderStreamEvent:async (event,selected)=>{
               onCodexEvent?.(event);
               await options?.onProviderStreamEvent?.(event,selected);
@@ -299,6 +314,7 @@ export function makeStream(config: ProviderConfig, credentials: ProviderCredenti
                 providerProgress = true;
               }
               if (type !== 'response.failed' && type !== 'error') return;
+              budget.error=codexFailure(undefined,event?.response?.error??event?.error??event).message;
               const code = event?.response?.error?.code ?? event?.error?.code ?? event?.code;
               retryableStreamFailure = typeof code === 'string' && RETRYABLE_CODEX_STREAM_ERRORS.has(code.toLowerCase());
             });
@@ -323,7 +339,8 @@ export function makeStream(config: ProviderConfig, credentials: ProviderCredenti
               if (event.type === 'error') {
                 if (account) {
                   // Do not persist raw provider diagnostics or remote failure bodies.
-                  event.error = {...event.error,errorMessage:options?.signal?.aborted?'Request cancelled.':'Codex inference failed; check account sign-in and availability.'};
+                  event.reason=options?.signal?.aborted?'aborted':'error';
+                  event.error = {...event.error,stopReason:options?.signal?.aborted?'aborted':'error',errorMessage:options?.signal?.aborted?'Request cancelled.':deadline?.aborted?'Codex inference timed out. Check the phone connection and retry.':budget.error??'Codex inference failed. The saved sign-in may still be valid.'};
                   delete event.error.diagnostics;
                 } else event.error.errorMessage = redactProviderSecrets(event.error.errorMessage || 'Provider request failed.',credentials).slice(0,512);
               }

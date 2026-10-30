@@ -255,6 +255,7 @@ test('autonomous starts preserve the interactive lifetime budget and publish act
   runtime.autonomy.execute('task',{action:'run_now',id:task.id});
   assert.equal(JSON.parse(runtime.dispatch(JSON.stringify({action:'autonomy_tick'}))).ok,true);
   assert.equal(runtime.autonomy.snapshot().runs[0].status,'running');assert.equal(host.runtimeState.totalStarts,1000);
+  assert.equal(runtime.state().tasks[0].mainThreadId,runtime.state().mainThreadId);
   assert.equal(events.filter(e=>e.type==='activity').at(-1).active,true);
   const deadline=Date.now()+5000;
   while(runtime.autonomy.snapshot().runs[0].status==='running'&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,20));

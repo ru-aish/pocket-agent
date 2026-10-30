@@ -20,6 +20,7 @@ import dev.pocket.control.ControlException;
 import java.nio.charset.StandardCharsets;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import org.json.JSONObject;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import static org.junit.Assert.*;
@@ -56,8 +57,9 @@ public class PhoneTargetDeviceTest {
                 try {
                     reader=ImageReader.newInstance(720,1280,PixelFormat.RGBA_8888,2);
                     reader.setOnImageAvailableListener(r->{try(Image frame=r.acquireLatestImage()) {}},new Handler(Looper.getMainLooper()));
-                    display=context.getSystemService(DisplayManager.class).createVirtualDisplay("PocketChooserTest",720,1280,320,reader.getSurface(),
-                        1|8|64|1024|2048|4096|16384|32768);
+                    int flags=1|8|64|1024|2048|4096|16384|32768;
+                    if(android.os.Build.VERSION.SDK_INT>=34)flags|=1<<16;
+                    display=context.getSystemService(DisplayManager.class).createVirtualDisplay("PocketChooserTest",720,1280,320,reader.getSurface(),flags);
                 } finally {automation.dropShellPermissionIdentity();}
                 assertNotNull(display);
                 automation.adoptShellPermissionIdentity();
@@ -220,6 +222,49 @@ public class PhoneTargetDeviceTest {
                     .invoke(wm,c.display.getDisplay().getDisplayId());
                 assertEquals("Worker display must retain DISPLAY_IME_POLICY_HIDE",2,policy);
             } finally {automation.dropShellPermissionIdentity();}
+        }
+    }
+    @Test public void android14FallbacksNeverLoseFocusOrPowerIsolation(){
+        int required=(1<<11)|(1<<14)|(1<<16);
+        for(int flags:ShellDisplayService.displayFlagChoices(34))assertEquals(required,flags&required);
+        assertTrue(ShellDisplayService.hasFocusIsolation(34,(1<<11)|(1<<12)));
+        assertFalse(ShellDisplayService.hasFocusIsolation(34,1<<11));
+        assertFalse(ShellDisplayService.hasFocusIsolation(34,1<<12));
+        assertTrue(ShellDisplayService.hasFocusIsolation(33,0));
+    }
+    @Test public void keyboardPreparationRequiresFocusedEditorAndSelectsOnlyItsText() throws Exception {
+        if(emulator())return;
+        DeviceTestAccess.ensureAccessibility();
+        try(NativeTools tools=new NativeTools(context)) {
+            String owner="keyboard-regression";
+            String prefix=tools.execute("phone_capabilities",new JSONObject(),owner).getString("operation_prefix");
+            JSONObject acquired=tools.execute("phone_screen",new JSONObject().put("action","acquire"),owner);
+            assertFalse(acquired.toString(),acquired.optBoolean("isError"));
+            JSONObject opened=tools.execute("phone_open_app",new JSONObject().put("package_name","dev.pocket.agent.fixture")
+                .put("operation_id",prefix+"_keyboardopen"+System.nanoTime()),owner);
+            assertFalse(opened.toString(),opened.optBoolean("isError"));
+            int privateDisplay=opened.getInt("display_id");
+            assertTrue("Private display must hold its own power lock",shell("dumpsys power").lines()
+                .anyMatch(line->line.contains("PocketAgent-PrivateDisplay")&&line.contains("displayId="+privateDisplay)));
+            AccessibilityProxyBackend screen=new AccessibilityProxyBackend(context,opened.getInt("display_id"));
+            Observation o=observed(screen,"POCKET_AGENT_FIXTURE");
+            Selector input=new Selector(null,null,"AGENT_INPUT");
+            Action type=new Action(Kind.TYPE,o.snapshotId(),null,null,null,null,100,"Replacement",true,null,null,input);
+            try {screen.prepareKeyboardText(type);fail("Unfocused editor must reject keyboard input");}
+            catch(ControlException expected){assertEquals(ControlException.Code.ACTION_REJECTED,expected.code);}
+            screen.execute(type);
+            o=screen.observe(false,720,200);
+            Node field=o.nodes().stream().filter(n->n.description().equals("AGENT_INPUT")).findFirst().orElseThrow();
+            assertTrue("Text entry must focus the intended field",field.focused());
+            screen.prepareKeyboardText(new Action(Kind.TYPE,o.snapshotId(),null,null,null,null,100,"Next",true,null,null,input));
+            Observation unchanged=screen.observe(false,720,200);
+            assertTrue("Preparing keyboard input must not change text",unchanged.nodes().stream().anyMatch(n->n.text().equals("Replacement")));
+            JSONObject typed=tools.execute("phone_act",new JSONObject().put("kind","type").put("input_method","keyboard")
+                .put("snapshot_id",unchanged.snapshotId()).put("text","Saved\nNext line").put("replace",true)
+                .put("selector",new JSONObject().put("description","AGENT_INPUT"))
+                .put("operation_id",prefix+"_keyboardtype"+System.nanoTime()),owner);
+            assertFalse(typed.toString(),typed.optBoolean("isError"));
+            observed(screen,"Saved\nNext line");
         }
     }
 

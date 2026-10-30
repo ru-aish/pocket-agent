@@ -167,7 +167,7 @@ function recordBatchUiState(host:any,owner:string,args:any,result:any):void {
 }
 
 export function nativeTools(host:any,owner:string,grant?:readonly string[]):any[] {
-  return schemas.filter(s=>!grant || grant.includes(s.name)).map(s=>({
+  return schemas.filter(s=>s.name==='phone_shell' || !grant || grant.includes(s.name)).map(s=>({
     name:s.name,label:s.name,description:s.description,
     parameters:Type.Unsafe(s.inputSchema),
     execute:async(_id:string,args:any,signal?:AbortSignal)=>{
@@ -178,8 +178,8 @@ export function nativeTools(host:any,owner:string,grant?:readonly string[]):any[
       };
       authorize();
       // Batch entries must also stay inside this conversation's grant.
-      if(s.name==='phone_batch' && args.calls?.some((x:any)=>!schemas.some(t=>t.name===x.name) || (grant && !grant.includes(x.name)))) throw new Error('Batch tool exceeds tool grant');
-      if(s.name==='phone_screen'){
+      if(s.name==='phone_batch' && args.calls?.some((x:any)=>!schemas.some(t=>t.name===x.name) || (x.name!=='phone_shell' && grant && !grant.includes(x.name)))) throw new Error('Batch tool exceeds tool grant');
+      if(s.name==='phone_screen'||s.name==='phone_shell'){
         if(args.action==='release'){
           const result=host.releaseScreen?.(owner);clearNativeToolUiState(host,owner);
           if(result?.isError)return toolResult(result);
@@ -190,13 +190,14 @@ export function nativeTools(host:any,owner:string,grant?:readonly string[]):any[
       const targets=s.name==='phone_batch'?args.calls?.filter((c:any)=>UI_TOOL_NAMES.has(c.name)).map((c:any)=>displayTarget(c.args)):undefined;
       if(targets?.some((target:DisplayTarget)=>target!==targets[0]))return toolResult({isError:true,code:'INVALID_ARGUMENT',message:'All UI calls in one batch must use the same display_target'});
       const needsVirtualUi=(UI_TOOL_NAMES.has(s.name)&&displayTarget(args)==='virtual')||
-        (s.name==='phone_batch'&&args.calls?.some((c:any)=>UI_TOOL_NAMES.has(c.name)&&displayTarget(c.args)==='virtual'));
+        (s.name==='phone_shell'&&args.action==='capture'&&args.display_id===undefined)||
+        (s.name==='phone_batch'&&args.calls?.some((c:any)=>(UI_TOOL_NAMES.has(c.name)&&displayTarget(c.args)==='virtual')||(c.name==='phone_shell'&&c.args?.action==='capture'&&c.args.display_id===undefined)));
       if(needsVirtualUi&&host.ensureDisplay){
         const result=await host.ensureDisplay(owner,signal);
         if(result?.isError)return toolResult(result);
       }
       if(signal?.aborted)throw new Error('Cancelled before native dispatch');
-      if(s.name==='phone_observe'||(s.name==='phone_batch'&&args.calls?.some((x:any)=>x.name==='phone_observe')))host.dropPriorImages(owner);
+      if(s.name==='phone_observe'||(s.name==='phone_shell'&&['capture','image'].includes(args.action))||(s.name==='phone_batch'&&args.calls?.some((x:any)=>x.name==='phone_observe')))host.dropPriorImages(owner);
       if(s.name==='phone_batch') {
         const settled=await settlePendingBatchObservation(host,owner,args,signal);
         if(settled?.isError)return toolResult(settled);

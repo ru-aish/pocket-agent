@@ -11,3 +11,5 @@ app/src/main/assets/runtime.cjs
 app/src/main/assets/runtime-manifest.json
 *.log
 __pycache__/
+preview/.generated/
+.omo/

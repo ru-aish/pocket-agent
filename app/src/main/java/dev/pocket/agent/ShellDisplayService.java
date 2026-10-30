@@ -30,21 +30,69 @@ public final class ShellDisplayService extends IDisplayShell.Stub {
     private static final int PUBLIC=1, PRESENTATION=2, OWN_CONTENT=8;
     private static final int TOUCH=1<<6, ROTATE=1<<7, DESTROY_CONTENT=1<<8;
     private static final int TRUSTED=1<<10, OWN_GROUP=1<<11, ALWAYS_UNLOCKED=1<<12;
-    private static final int OWN_FOCUS=1<<14, DEVICE_GROUP=1<<15;
+    private static final int OWN_FOCUS=1<<14, DEVICE_GROUP=1<<15, NO_STEAL_TOP_FOCUS=1<<16;
+    private static final int DISPLAY_OWN_FOCUS=1<<11, DISPLAY_NO_STEAL_TOP_FOCUS=1<<12;
     private static final int DISPLAY_IME_POLICY_HIDE=2;
     private final Context context;
     private final Map<Integer,OwnedDisplay> displays=new LinkedHashMap<>();
     private final DisplayRestorationReservations reservations=new DisplayRestorationReservations();
     private HandlerThread frameThread;
+    private final ShellTerminal terminal=new ShellTerminal(new java.io.File("/data/local/tmp/pocket-agent-shell"));
+
+    private static final class DisplayWakeLock implements AutoCloseable {
+        final Object power;
+        final android.os.IBinder token=new android.os.Binder();
+        final java.lang.reflect.Method release;
+        DisplayWakeLock(android.view.Display display) throws Exception {
+            Class<?> infoType=Class.forName("android.view.DisplayInfo");
+            Object info=infoType.getConstructor().newInstance();
+            if(!Boolean.TRUE.equals(android.view.Display.class.getMethod("getDisplayInfo",infoType).invoke(display,info)))
+                throw new IllegalStateException("Private display information unavailable");
+            int group=infoType.getField("displayGroupId").getInt(info);
+            if(group<=0)throw new SecurityException("Private display must have its own power group");
+            android.os.IBinder binder=(android.os.IBinder)Class.forName("android.os.ServiceManager").getMethod("getService",String.class).invoke(null,"power");
+            power=Class.forName("android.os.IPowerManager$Stub").getMethod("asInterface",android.os.IBinder.class).invoke(null,binder);
+            Class<?> api=Class.forName("android.os.IPowerManager");
+            release=api.getMethod("releaseWakeLock",android.os.IBinder.class,int.class);
+            java.lang.reflect.Method acquire=null;
+            for(java.lang.reflect.Method method:api.getMethods()) {
+                Class<?>[] parameters=method.getParameterTypes();
+                if(method.getName().equals("acquireWakeLock")&&(parameters.length==7||parameters.length==8)&&parameters[6]==int.class){acquire=method;break;}
+            }
+            if(acquire==null)throw new NoSuchMethodException("Display-scoped wake locks unavailable");
+            Object[] args=acquire.getParameterCount()==8
+                ?new Object[]{token,0x1000000a,"PocketAgent-PrivateDisplay","com.android.shell",null,null,display.getDisplayId(),null}
+                :new Object[]{token,0x1000000a,"PocketAgent-PrivateDisplay","com.android.shell",null,null,display.getDisplayId()};
+            try {acquire.invoke(power,args);}catch(Exception failure){close();throw failure;}
+        }
+        @Override public void close(){try {release.invoke(power,token,0);}catch(Exception failure){android.util.Log.w("PocketDisplayShizuku","Private display wake lock release failed");}}
+    }
 
     private static final class OwnedDisplay {
         final VirtualDisplay display;
         final ImageReader reader;
+        final DisplayWakeLock wakeLock;
         final Map<Integer,Integer> protectedTasks=new LinkedHashMap<>();
-        OwnedDisplay(VirtualDisplay display,ImageReader reader,DisplayTaskSnapshot before) {
-            this.display=display;this.reader=reader;protectedTasks.putAll(before.taskDisplays);
+        Image latestFrame;
+        boolean closed;
+        OwnedDisplay(VirtualDisplay display,ImageReader reader,DisplayTaskSnapshot before,DisplayWakeLock wakeLock) {
+            this.display=display;this.reader=reader;this.wakeLock=wakeLock;protectedTasks.putAll(before.taskDisplays);
         }
-        void close() {try {display.release();}finally {reader.close();}}
+        synchronized void updateFrame(Image frame){if(closed){frame.close();return;}if(latestFrame!=null)latestFrame.close();latestFrame=frame;}
+        synchronized String preview() {
+            if(latestFrame==null)return "";
+            Image.Plane plane=latestFrame.getPlanes()[0];int width=latestFrame.getWidth(),height=latestFrame.getHeight();
+            android.graphics.Bitmap padded=android.graphics.Bitmap.createBitmap(plane.getRowStride()/plane.getPixelStride(),height,android.graphics.Bitmap.Config.ARGB_8888);
+            android.graphics.Bitmap cropped=null,scaled=null;
+            try {
+                java.nio.ByteBuffer pixels=plane.getBuffer();pixels.rewind();java.nio.ByteBuffer packed=java.nio.ByteBuffer.allocate(padded.getByteCount());packed.put(pixels);packed.rewind();padded.copyPixelsFromBuffer(packed);
+                cropped=android.graphics.Bitmap.createBitmap(padded,0,0,width,height);
+                int targetWidth=Math.min(480,width);scaled=android.graphics.Bitmap.createScaledBitmap(cropped,targetWidth,Math.max(1,height*targetWidth/width),true);
+                ByteArrayOutputStream bytes=new ByteArrayOutputStream();scaled.compress(android.graphics.Bitmap.CompressFormat.JPEG,65,bytes);
+                return android.util.Base64.encodeToString(bytes.toByteArray(),android.util.Base64.NO_WRAP);
+            } finally {if(scaled!=null&&scaled!=cropped&&scaled!=padded)scaled.recycle();if(cropped!=null&&cropped!=padded)cropped.recycle();padded.recycle();}
+        }
+        synchronized void close() {closed=true;try {display.release();}finally {wakeLock.close();if(latestFrame!=null){latestFrame.close();latestFrame=null;}reader.close();}}
     }
 
     public ShellDisplayService() {this.context=null;android.util.Log.i("PocketDisplayShizuku","Shizuku UserService no-context constructor uid="+Process.myUid());}
@@ -66,21 +114,20 @@ public final class ShellDisplayService extends IDisplayShell.Stub {
         if(frameThread==null) {frameThread=new HandlerThread("pocket-display-frames");frameThread.start();}
         return new Handler(frameThread.getLooper());
     }
+    static int[] displayFlagChoices(int apiLevel) {
+        int required=PUBLIC|PRESENTATION|OWN_CONTENT|TOUCH|ROTATE|DESTROY_CONTENT|TRUSTED;
+        int grouped=required|OWN_GROUP|ALWAYS_UNLOCKED;
+        if(apiLevel>=34){int isolated=grouped|OWN_FOCUS|NO_STEAL_TOP_FOCUS;return new int[]{isolated|DEVICE_GROUP,isolated};}
+        return new int[]{grouped,required|OWN_GROUP};
+    }
+    static boolean hasFocusIsolation(int apiLevel,int flags){int protection=DISPLAY_OWN_FOCUS|DISPLAY_NO_STEAL_TOP_FOCUS;return apiLevel<34||(flags&protection)==protection;}
     @Override public synchronized int createDisplay(int width,int height,int dpi) {
         if(Process.myUid()!=2000 && Process.myUid()!=0) throw new SecurityException("Requires Shizuku shell/root user service");
         if(width<320 || width>1920 || height<320 || height>2560 || dpi<120 || dpi>640) throw new IllegalArgumentException("Invalid display dimensions");
         if(displays.size()>=3) throw new IllegalStateException("Three virtual displays already allocated");
         DisplayTaskSnapshot before=taskSnapshot();
-        ImageReader reader=ImageReader.newInstance(width,height,PixelFormat.RGBA_8888,2);
-        reader.setOnImageAvailableListener(r->{
-            try(Image frame=r.acquireLatestImage()) {
-                // Drain producer frames without recording content or running a video encoder.
-            } catch(IllegalStateException ignored) {}
-        },frameHandler());
-        int required=PUBLIC|PRESENTATION|OWN_CONTENT|TOUCH|ROTATE|DESTROY_CONTENT|TRUSTED;
-        int extended=required|OWN_GROUP|ALWAYS_UNLOCKED;
-        if(Build.VERSION.SDK_INT>=34) extended|=OWN_FOCUS|DEVICE_GROUP;
-        int[] choices={extended,required|OWN_GROUP,required};
+        ImageReader reader=ImageReader.newInstance(width,height,PixelFormat.RGBA_8888,3);
+        int[] choices=displayFlagChoices(Build.VERSION.SDK_INT);
         Exception last=null;
         try {
             DisplayManager dm=displayManager();
@@ -96,14 +143,21 @@ public final class ShellDisplayService extends IDisplayShell.Stub {
                         display.release();
                         throw new IllegalStateException("Android reused an allocated display ID");
                     }
-                    try {hideIme(id);}
+                    if(!hasFocusIsolation(Build.VERSION.SDK_INT,display.getDisplay().getFlags())){
+                        display.release();last=new IllegalStateException("Android did not retain private display focus isolation");continue;
+                    }
+                    DisplayWakeLock wakeLock;
+                    try {hideIme(id);wakeLock=new DisplayWakeLock(display.getDisplay());}
                     catch(Exception imeFailure) {
                         display.release();
                         last=imeFailure;
                         continue;
                     }
-                    displays.put(id,new OwnedDisplay(display,reader,before));
-                    return id;
+                    OwnedDisplay owned=new OwnedDisplay(display,reader,before,wakeLock);
+                    try {
+                    reader.setOnImageAvailableListener(r->{try {Image frame=r.acquireLatestImage();if(frame!=null)owned.updateFrame(frame);}catch(IllegalStateException closed){android.util.Log.d("PocketDisplayShizuku","Frame reader closed");}},frameHandler());
+                    } catch(Exception setupFailure) {owned.close();throw setupFailure;}
+                    displays.put(id,owned);return id;
                 } catch(Exception e) {last=e;}
             }
         } catch(Exception e) {last=e;}
@@ -293,6 +347,9 @@ public final class ShellDisplayService extends IDisplayShell.Stub {
         restoreBorrowedTasks(id,owned,taskSnapshot());
     }
     private boolean launchTracked(int id,String... command) {
+        return launchTrackedForPackage(id,null,command);
+    }
+    private boolean launchTrackedForPackage(int id,String expectedPackage,String... command) {
         DisplayTaskSnapshot before=taskSnapshot();
         OwnedDisplay owned=displays.get(id);
         protectOutsideTasks(id,owned,before);
@@ -303,27 +360,60 @@ public final class ShellDisplayService extends IDisplayShell.Stub {
             if(restoreBorrowedTasks(id,owned,snapshot))return false;
             Set<Integer> created=snapshot.onDisplay(id);created.removeAll(before.taskDisplays.keySet());
             if(!created.isEmpty())return true;
+            if(expectedPackage!=null&&snapshot.packageOn(expectedPackage,id))return true;
             try {Thread.sleep(75);} catch(InterruptedException e) {Thread.currentThread().interrupt();return false;}
         } while(android.os.SystemClock.elapsedRealtime()<deadline);
         return false;
     }
     private static final String WORKER_ACTIVITY_FLAGS="0x18800000";
+    @Override public synchronized String previewDisplay(int id) {owned(id);return displays.get(id).preview();}
+    private boolean acquireBackgroundStore(int id) {
+        OwnedDisplay owned=displays.get(id);
+        DisplayTaskSnapshot before=taskSnapshot();
+        if(!before.packageOutside("com.android.vending",id))return true;
+        Set<Integer> tasks=before.backgroundStoreTasks(id);
+        if(tasks.size()!=1)return false;
+        int task=tasks.iterator().next();
+        DisplayTaskSnapshot current=taskSnapshot();
+        if(!current.backgroundStoreTasks(id).equals(tasks))return false;
+        boolean moved=exec("/system/bin/am","display","move-stack",String.valueOf(task),String.valueOf(id));
+        DisplayTaskSnapshot after=taskSnapshot();
+        if(after.onDisplay(id).contains(task)) {
+            owned.protectedTasks.remove(task);
+            return moved;
+        }
+        return false;
+    }
     private boolean canLaunchSeparately(int id,android.content.Intent intent) {
         // MULTIPLE_TASK does not override singleTask/singleInstance. Refuse to
         // deliver a new intent to an existing personal task (which can clear its
         // back stack) before the post-launch migration check gets a chance to run.
         android.content.pm.ResolveInfo resolved=asShell().getPackageManager().resolveActivity(intent,0);
         if(resolved==null||resolved.activityInfo==null)return false;
-        android.content.pm.ActivityInfo activity=resolved.activityInfo;
-        if(activity.launchMode!=android.content.pm.ActivityInfo.LAUNCH_SINGLE_TASK
-            &&activity.launchMode!=android.content.pm.ActivityInfo.LAUNCH_SINGLE_INSTANCE)return true;
+        // A chooser is only an intermediate activity. Check its possible targets
+        // before dispatch, since a later handoff can reuse a personal task.
         DisplayTaskSnapshot snapshot=taskSnapshot();
-        return snapshot.hasPackageRecords()&&!snapshot.packageOutside(activity.packageName,id);
+        for(android.content.pm.ResolveInfo candidate:asShell().getPackageManager().queryIntentActivities(intent,0)) {
+            android.content.pm.ActivityInfo target=candidate.activityInfo;
+            if(target!=null && !canLaunchTargetSeparately(target.launchMode,
+                snapshot.hasPackageRecords(),snapshot.packageOutside(target.packageName,id)))return false;
+        }
+        android.content.pm.ActivityInfo activity=resolved.activityInfo;
+        return canLaunchTargetSeparately(activity.launchMode,snapshot.hasPackageRecords(),snapshot.packageOutside(activity.packageName,id));
+    }
+    static boolean canLaunchTargetSeparately(int launchMode,boolean packageRecords,boolean outsideTask) {
+        return launchMode!=android.content.pm.ActivityInfo.LAUNCH_SINGLE_TASK
+            &&launchMode!=android.content.pm.ActivityInfo.LAUNCH_SINGLE_INSTANCE
+            || packageRecords&&!outsideTask;
     }
     @Override public synchronized boolean launchActivity(int id,String componentName) {
         owned(id);
         android.content.ComponentName component=android.content.ComponentName.unflattenFromString(componentName);
         if(component==null || component.getPackageName().trim().isEmpty()) throw new IllegalArgumentException("Expected component name");
+        if(component.getPackageName().equals("com.android.vending")) {
+            if(!acquireBackgroundStore(id))return false;
+            if(taskSnapshot().packageOn("com.android.vending",id))return true;
+        }
         if(!canLaunchSeparately(id,new android.content.Intent().setComponent(component)))return false;
         return launchTracked(id,"/system/bin/am","start","--display",String.valueOf(id),"-f",WORKER_ACTIVITY_FLAGS,"-n",component.flattenToString());
     }
@@ -334,9 +424,21 @@ public final class ShellDisplayService extends IDisplayShell.Stub {
         if(uri.getHost()==null || uri.getHost().trim().isEmpty() || uri.getUserInfo()!=null ||
             (!"https".equalsIgnoreCase(scheme) && !"http".equalsIgnoreCase(scheme)))
             throw new IllegalArgumentException("Only ordinary HTTP(S) URLs without embedded credentials are supported");
+        if(isPlayStoreDetails(uri)) {
+            if(!acquireBackgroundStore(id))return false;
+            android.content.Intent storeIntent=new android.content.Intent(android.content.Intent.ACTION_VIEW,uri).setPackage("com.android.vending");
+            if(!canLaunchSeparately(id,storeIntent))return false;
+            return launchTrackedForPackage(id,"com.android.vending","/system/bin/am","start","--display",String.valueOf(id),"-f",WORKER_ACTIVITY_FLAGS,
+                "-a",android.content.Intent.ACTION_VIEW,"-d",uri.toString(),"-p","com.android.vending");
+        }
         if(!canLaunchSeparately(id,new android.content.Intent(android.content.Intent.ACTION_VIEW,uri)))return false;
         return launchTracked(id,"/system/bin/am","start","--display",String.valueOf(id),"-f",WORKER_ACTIVITY_FLAGS,
             "-a",android.content.Intent.ACTION_VIEW,"-d",uri.toString());
+    }
+    static boolean isPlayStoreDetails(android.net.Uri uri) {
+        return "https".equalsIgnoreCase(uri.getScheme())&&"play.google.com".equalsIgnoreCase(uri.getHost())
+            &&uri.getPort()==-1&&"/store/apps/details".equals(uri.getPath())
+            &&uri.getQueryParameter("id")!=null&&uri.getQueryParameter("id").matches("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+");
     }
     @Override public synchronized boolean showClock(int id,String screen) {
         owned(id);
@@ -353,8 +455,51 @@ public final class ShellDisplayService extends IDisplayShell.Stub {
         if(keyCode!=4 && keyCode!=3 && keyCode!=187) throw new SecurityException("Key not permitted");
         return exec("/system/bin/input","-d",String.valueOf(id),"keyevent",String.valueOf(keyCode));
     }
+    @Override public synchronized boolean injectText(int id,String text) {
+        owned(id);
+        if(text==null||text.isEmpty()||text.length()>2000)throw new IllegalArgumentException("Keyboard text requires 1..2000 characters");
+        android.view.KeyEvent[] events=android.view.KeyCharacterMap.load(android.view.KeyCharacterMap.VIRTUAL_KEYBOARD).getEvents(text.toCharArray());
+        if(events==null)throw new IllegalArgumentException("Text is not representable by the Android virtual keyboard");
+        try {
+            Class<?> input=Class.forName("android.hardware.input.InputManager");
+            Object manager=input.getMethod("getInstance").invoke(null);
+            java.lang.reflect.Method inject=input.getMethod("injectInputEvent",android.view.InputEvent.class,int.class);
+            java.lang.reflect.Method display=android.view.InputEvent.class.getMethod("setDisplayId",int.class);
+            for(android.view.KeyEvent event:events) {
+                display.invoke(event,id);
+                if(!Boolean.TRUE.equals(inject.invoke(manager,event,2)))return false;
+            }
+            return true;
+        } catch(ReflectiveOperationException failure) {return false;}
+    }
     @Override public synchronized String health() {
         return "uid="+Process.myUid()+";display_count="+displays.size()+";android="+Build.VERSION.SDK_INT;
+    }
+    @Override public String terminal(String request,String owner,int displayId) {
+        try {
+            org.json.JSONObject args=new org.json.JSONObject(request),result;
+            String action=args.getString("action");
+            if(action.equals("context"))result=terminal.context(owner);
+            else if(action.equals("exec"))result=terminal.execute(args,owner,displayId<0?null:displayId);
+            else if(action.equals("poll"))result=terminal.poll(args.getString("session_id"),args.optLong("offset",0));
+            else if(action.equals("stop"))result=terminal.stop(args.getString("session_id"),args.optLong("offset",0));
+            else if(action.equals("image"))result=ShellImages.read(args.getString("path"),args.optInt("max_image_dimension",1280));
+            else if(action.equals("capture")) {
+                int target=args.optInt("display_id",displayId);if(target!=displayId)throw new SecurityException("Capture must use the assigned display");OwnedDisplay active;
+                synchronized(this){active=displays.get(target);}
+                if(active==null)throw new IllegalArgumentException("No frame reader for this display. Acquire a private display or use shell screencap plus action=image for the physical screen.");
+                synchronized(active) {
+                    if(active.latestFrame==null)throw new IllegalStateException("No display frame yet; wait for app rendering and capture again");
+                    result=ShellImages.frame(active.latestFrame,args.optInt("max_image_dimension",1280));
+                }
+                result.put("display_id",target);
+            } else throw new IllegalArgumentException("Unsupported shell action");
+            result.put("active_sessions",terminal.activeSessions());result.put("uid",Process.myUid());result.put("assigned_display_id",displayId<0?org.json.JSONObject.NULL:displayId);
+            return result.toString();
+        } catch(Exception error) {
+            return Json.failure(error instanceof SecurityException?"PERMISSION_REQUIRED":error instanceof IllegalArgumentException||error instanceof org.json.JSONException?"INVALID_ARGUMENT":"SHELL_ERROR",
+                error.getMessage()==null?error.getClass().getSimpleName():error.getMessage()).toString();
+        }
     }
     @Override public synchronized void destroy() {
         // A concurrent removal owns the task-reconciliation obligation. Do not

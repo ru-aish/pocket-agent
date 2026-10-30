@@ -1,0 +1,86 @@
+name: Mobile UI checks
+on:
+  pull_request:
+    paths:
+      - 'scripts/**'
+      - 'control-core/**'
+      - '*.gradle.kts'
+      - 'gradle.properties'
+      - 'gradlew*'
+      - 'gradle/**'
+      - 'app/**'
+      - 'android-platform/**'
+      - 'runtime/**'
+      - 'preview/**'
+      - '.github/workflows/mobile-ui-checks.yml'
+      - '.github/scripts/run-mobile-ui-integration-tests.sh'
+concurrency:
+  group: mobile-ui-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22.22.2'
+          cache: npm
+          cache-dependency-path: runtime/package-lock.json
+      - name: Runtime and local companion contracts
+        working-directory: runtime
+        run: npm ci && npm test && npm run test:ui && npm run build
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Protocol and display ownership tests
+        run: |
+          python3 -m pip install aiohttp==3.13.5
+          python3 -m unittest discover -s scripts -p 'test_*.py'
+      - uses: android-actions/setup-android@v4
+      - run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0' 'ndk;27.2.12479018'
+      - uses: gradle/actions/setup-gradle@v5
+      - name: Build isolated UI and instrumentation APKs, then lint
+        run: ./gradlew --no-daemon -PuiPreview :app:assembleDebug :app:assembleDevelopment :app:assembleDebugAndroidTest :app:lintDebug :app:lintRelease :app:minifyReleaseWithR8
+      - name: Record APK source and checksums
+        run: |
+          git rev-parse HEAD > app/build/outputs/apk/SOURCE_COMMIT.txt
+          cd app/build/outputs/apk
+          sha256sum debug/*.apk development/*.apk > SHA256SUMS.txt
+      - name: Preserve installable APKs
+        uses: actions/upload-artifact@v6
+        with:
+          name: Pocket-Agent-preview-APKs
+          path: |
+            app/build/outputs/apk/debug/*.apk
+            app/build/outputs/apk/development/*.apk
+            app/build/outputs/apk/SOURCE_COMMIT.txt
+            app/build/outputs/apk/SHA256SUMS.txt
+          retention-days: 14
+      - name: Allow hardware-assisted emulator execution
+        run: sudo chmod 666 /dev/kvm
+      - name: Exercise mobile chat, provider profiles and voice UI integration
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          target: google_apis
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -no-boot-anim
+          script: bash .github/scripts/run-mobile-ui-integration-tests.sh
+      - name: Preserve Android test reports
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: mobile-ui-integration-evidence
+          path: |
+            app/build/outputs/mobile-ui-integration-evidence/
+            app/build/outputs/androidTest-results/connected/
+            app/build/reports/androidTests/connected/
+            app/build/reports/lint-results-debug.html
+            app/build/reports/lint-results-release.html
+          if-no-files-found: ignore
+          retention-days: 14

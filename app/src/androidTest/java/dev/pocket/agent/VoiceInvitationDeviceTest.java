@@ -74,16 +74,24 @@ public final class VoiceInvitationDeviceTest {
     private JSONObject request(Context context) throws Exception {
         return VoiceConversationInvitation.request(context, Json.obj("threadId", THREAD, "message", "Would talking help?"));
     }
+    private static Notification awaitInvitationNotification(Context context) {
+        NotificationManager manager = context.getSystemService(NotificationManager.class);
+        long until = SystemClock.elapsedRealtime() + 3_000L;
+        while (manager != null && SystemClock.elapsedRealtime() < until) {
+            for (android.service.notification.StatusBarNotification item : manager.getActiveNotifications())
+                if (item.getId() == VoiceConversationInvitation.NOTIFICATION_ID) return item.getNotification();
+            SystemClock.sleep(25L);
+        }
+        return null;
+    }
     @Test public void silentInvitationNeedsNoMicrophoneAndCoalescesRequests() throws Exception {
         fixture((context, store) -> {
             int microphonePermission = context.checkSelfPermission(Manifest.permission.RECORD_AUDIO);
             JSONObject first = request(context), second = request(context);
             assertEquals("pending", first.getString("status"));
             assertEquals(first.getString("id"), second.getString("id"));
-            Notification notice = null;
-            for (android.service.notification.StatusBarNotification item : context.getSystemService(NotificationManager.class).getActiveNotifications())
-                if (item.getId() == VoiceConversationInvitation.NOTIFICATION_ID) notice = item.getNotification();
-            assertNotNull(notice);
+            Notification notice = awaitInvitationNotification(context);
+            assertNotNull("The invitation notification should be visible after it is posted", notice);
             assertNull(notice.fullScreenIntent);
             assertNull(notice.sound);
             assertTrue(notice.vibrate == null || notice.vibrate.length == 0);
@@ -137,8 +145,8 @@ public final class VoiceInvitationDeviceTest {
             } catch (SecurityException expected) { }
             assertTrue(VoiceConversationInvitation.canAccept(context, id));
             assertEquals("pending", VoiceConversationInvitation.preferences(context).getString("invitationStatus"));
-            assertTrue(java.util.Arrays.stream(context.getSystemService(NotificationManager.class).getActiveNotifications())
-                .anyMatch(item -> item.getId() == VoiceConversationInvitation.NOTIFICATION_ID));
+            assertNotNull("A failed start must preserve the invitation notification",
+                awaitInvitationNotification(context));
             int[] starts = {0};
             assertTrue(VoiceConversationInvitation.startAccepted(context, id, () -> starts[0]++));
             assertEquals("accepted", VoiceConversationInvitation.preferences(context).getString("invitationStatus"));

@@ -12,6 +12,43 @@ import static org.junit.Assert.*;
 
 @RunWith(AndroidJUnit4.class)
 public class ConversationHistoryDeviceTest {
+    @Test public void chatSearchMatchesPrefixesAndRenamedTitlesWithoutWorkerLeakage() throws Exception {
+        Context context=InstrumentationRegistry.getInstrumentation().getTargetContext();String name="chat-prefix-search.db";context.deleteDatabase(name);
+        try(StateStore store=new StateStore(context,name)){
+            JSONObject saved=checkpoint("Find the Ballon d'Or ranking and update my notes",100);
+            saved.put("workerMessages",new JSONObject().put("worker-a",new JSONArray().put(new JSONObject().put("role","user").put("timestamp",200).put("content","Ballistic private worker text"))));store.saveDurable(saved);
+            for(String query:new String[]{"bal","ball","ballon","BAL","ball note"})assertEquals(query,1,store.listConversations(query).length());
+            assertEquals(0,store.listConversations("ballistic").length());
+            assertEquals(0,store.listConversations("travel").length());
+            assertEquals(1,store.listConversations("trav",java.util.Map.of("33333333-3333-4333-8333-333333333333","Travel plans")).length());
+            assertEquals(0,store.listConversations("'; DROP TABLE conversation_history --").length());assertEquals(1,store.listConversations("bal").length());
+        }finally{context.deleteDatabase(name);}
+    }
+    @Test public void drawerSearchAndPagesReadTheOriginalArchive() throws Exception {
+        Context context=InstrumentationRegistry.getInstrumentation().getTargetContext();
+        String name="drawer-history-instrumentation.db"; context.deleteDatabase(name);
+        try (StateStore store=new StateStore(context,name)) {
+            JSONArray messages=new JSONArray();
+            for (int i=0;i<65;i++) messages.put(new JSONObject().put("role","user").put("timestamp",1000+i).put("content","Sapphire archive message "+i));
+            JSONObject saved=checkpoint("",1).put("mainMessages",messages);
+            saved.put("workerMessages",new JSONObject().put("worker-a",new JSONArray().put(new JSONObject().put("role","user").put("timestamp",2000).put("content","Sapphire internal worker prompt"))));
+            store.saveDurable(saved);
+            JSONArray chats=store.listConversations("Sapphire");
+            assertEquals(1,chats.length());
+            String thread=chats.getJSONObject(0).getString("threadId");
+            assertEquals(65,chats.getJSONObject(0).getInt("count"));
+            JSONArray first=store.readConversation(thread,0).getJSONArray("messages"),second=store.readConversation(thread,60).getJSONArray("messages");
+            assertEquals(60,first.length());assertEquals(5,second.length());
+            assertEquals("Sapphire archive message 0",first.getJSONObject(0).getString("text"));
+            assertEquals("Sapphire archive message 59",first.getJSONObject(59).getString("text"));
+            assertEquals("Sapphire archive message 60",second.getJSONObject(0).getString("text"));
+            assertEquals("Sapphire archive message 64",second.getJSONObject(4).getString("text"));
+            assertEquals(0,store.listConversations("obsidian").length());
+            assertEquals(1,store.listConversations("").length());
+            assertEquals(65,store.resumeMainConversation(thread).length());
+            assertThrows(IllegalArgumentException.class,()->store.resumeMainConversation("worker:worker-a"));
+        } finally { context.deleteDatabase(name); }
+    }
     private JSONObject checkpoint(String text,long timestamp) throws Exception {
         return new JSONObject().put("mainThreadId","33333333-3333-4333-8333-333333333333")
             .put("mainMessages",new JSONArray().put(new JSONObject().put("role","user")

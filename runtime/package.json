@@ -6,6 +6,7 @@
   "scripts": {
     "build": "node build.mjs",
     "test:gate": "tsx --test test/gate.test.ts",
+    "test:ui": "node -e \"import('../preview/build.mjs').then(m=>m.buildProviderRuntime())\" && node --test ../preview/test/*.test.mjs",
     "test": "tsx --test test/*.test.ts"
   },
   "dependencies": {
@@ -16,6 +17,7 @@
   },
   "devDependencies": {
     "esbuild": "0.25.12",
+    "linkedom": "0.18.12",
     "tsx": "4.20.6"
   },
   "engines": {

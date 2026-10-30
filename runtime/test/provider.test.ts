@@ -40,6 +40,21 @@ test('Responses wire preserves optional Pi9 action fields by explicitly disablin
 import * as zlib from 'node:zlib';
 import {CODEX_RESPONSES_URL,CODEX_TOKEN_URL,registerCodexCredentialUpdater} from '../src/codex-auth.js';
 const accountConfig={mode:'codex-account' as const,model:'gpt-6-luna'};
+test('Codex reports the actual safe failure category rather than blaming every error on sign-in',async()=>{
+ const fixtures=[
+  {status:401,code:'invalid_token',match:/saved login.*401/i},
+  {status:429,code:'usage_limit_reached',match:/usage limit/i},
+  {status:400,code:'context_length_exceeded',match:/conversation.*too long/i},
+  {status:404,code:'model_not_found',match:/model.*unavailable/i},
+  {status:400,code:'invalid_encrypted_content',match:/saved reasoning history/i},
+  {status:400,code:'unsupported_value',match:/model settings/i},
+ ];
+ for(const fixture of fixtures){
+  const credentials=accountCredential();let calls=0;
+  const stream=await makeStream(accountConfig,credentials,'main')(modelFor(accountConfig,credentials),{messages:[]},{fetch:async()=>{calls++;return Response.json({error:{code:fixture.code,message:credentials.refreshToken}},{status:fixture.status});}});
+  const result=await stream.result();assert.match(result.errorMessage||'',fixture.match);assert.equal(calls,1);assert.ok(!JSON.stringify(result).includes(credentials.refreshToken));
+ }
+});
 function accountCredential(expiry=Date.now()+3600000) {
  const accountId='synthetic-account';
  const accessToken=[Buffer.from('{}').toString('base64url'),Buffer.from(JSON.stringify({exp:Math.floor(expiry/1000),'https://api.openai.com/auth':{chatgpt_account_id:accountId}})).toString('base64url'),'signature'].join('.');
@@ -284,6 +299,31 @@ test('Codex inference deadline covers retry backoff and stalled response bodies'
    }
  } finally {(AbortSignal as any).timeout=originalTimeout;}
 });
+test('healthy Codex reasoning is not cancelled by the old two-minute total deadline',async()=>{
+ const descriptor=Object.getOwnPropertyDescriptor(AbortSignal,'timeout');assert.ok(descriptor);
+ const originalTimeout=AbortSignal.timeout,seen:number[]=[];
+ try {
+  Object.defineProperty(AbortSignal,'timeout',{...descriptor,value:(ms:number)=>{seen.push(ms);return originalTimeout(ms===120000?10:1000);}});
+  const credentials=accountCredential(),payload=await codexResponse([]).text();
+  const result=await(await makeStream(accountConfig,credentials,'main')(modelFor(accountConfig,credentials),{messages:[]},{fetch:async(_input,init)=>new Response(new ReadableStream({start(controller){
+   const timer=setTimeout(()=>{controller.enqueue(new TextEncoder().encode(payload));controller.close();},40);
+   init?.signal?.addEventListener('abort',()=>{clearTimeout(timer);controller.error(new Error('deadline'));},{once:true});
+  }}))})).result();
+  assert.equal(result.stopReason,'stop');assert.ok(seen.includes(600000));
+ } finally {Object.defineProperty(AbortSignal,'timeout',descriptor);}
+});
+test('Codex idle watchdog aborts a stalled stream without replaying the request',async()=>{
+ const descriptor=Object.getOwnPropertyDescriptor(globalThis,'setTimeout');assert.ok(descriptor);
+ const schedule=globalThis.setTimeout;let cancelled=false,calls=0;
+ try {
+  Object.defineProperty(globalThis,'setTimeout',{...descriptor,value:(callback:(...args:unknown[])=>void,ms?:number,...args:unknown[])=>schedule(callback,ms===300000?20:ms,...args)});
+  const credentials=accountCredential();
+  const result=await(await makeStream(accountConfig,credentials,'main')(modelFor(accountConfig,credentials),{messages:[]},{fetch:async(_input,init)=>{
+   calls++;return new Response(new ReadableStream({start(controller){init?.signal?.addEventListener('abort',()=>{cancelled=true;controller.error(new Error('idle'));},{once:true});}}));
+  }})).result();
+  assert.equal(result.stopReason,'error');assert.match(result.errorMessage||'',/stalled for five minutes/);assert.equal(cancelled,true);assert.equal(calls,1);
+ } finally {Object.defineProperty(globalThis,'setTimeout',descriptor);}
+});
 
 test('Codex does not restart SSE after partial tool output or permanent provider failure',async()=>{
  for(const partialTool of [false,true]) {
@@ -509,4 +549,17 @@ test('explicit same-ID worker catalog selection does not inherit manual main-mod
      } finally {session.dispose();}
    }
  } finally {globalThis.fetch=originalFetch;}
+});
+
+test('stalled terminal Codex error bodies obey caller cancellation without waiting for the overall deadline',{timeout:2000},async()=>{
+ const credentials=accountCredential(),abort=new AbortController();let cancelled=false;
+ const stream=await makeStream(accountConfig,credentials,'main')(modelFor(accountConfig,credentials),{messages:[]},{signal:abort.signal,fetch:async()=>{
+   setTimeout(()=>abort.abort(),20);
+   return new Response(new ReadableStream({cancel(){cancelled=true;}}),{status:401});
+ }});
+ assert.equal((await stream.result()).stopReason,'aborted');assert.equal(cancelled,true);
+});
+test('message-only invalid encrypted content retains fresh-task recovery guidance',async()=>{
+ const {codexFailure}=await import('../src/codex-errors.js');
+ assert.match(codexFailure(400,{error:{message:'Invalid encrypted content'}}).message,/fresh task context/);
 });

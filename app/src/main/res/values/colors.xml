@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Backgrounds -->
+    <color name="bg_primary">#0F1117</color>
+    <color name="bg_surface">#1A1D27</color>
+    <color name="bg_elevated">#222638</color>
+    <!-- Accent -->
+    <color name="accent">#6C63FF</color>
+    <color name="accent_dark">#5A52E0</color>
+    <!-- Text -->
+    <color name="text_primary">#EEEEF2</color>
+    <color name="text_secondary">#9095A8</color>
+    <!-- Status -->
+    <color name="status_ok">#4CAF50</color>
+    <color name="status_busy">#FFC107</color>
+    <color name="status_error">#EF5350</color>
+    <color name="status_idle">#9095A8</color>
+    <!-- Messages -->
+    <color name="msg_user_bg">#6C63FF</color>
+    <color name="msg_agent_bg">#222638</color>
+    <!-- Task status -->
+    <color name="task_running">#4CAF50</color>
+    <color name="task_done">#9095A8</color>
+    <color name="task_failed">#EF5350</color>
+    <color name="task_pending">#FFC107</color>
+</resources>

@@ -37,12 +37,47 @@ final class AgentDisplayCoordinator implements AutoCloseable {
     private boolean retryScheduled,closeWhenIdle;
     private int retryAttempt;
     private ShizukuDisplayClient client;
+    private final Object shellRpcLock=new Object();
+    private int shellRequests,activeShellSessions;
+    private boolean shellCheckScheduled;
 
     AgentDisplayCoordinator(Context context) {this.context=context.getApplicationContext();}
 
     private synchronized ShizukuDisplayClient client() {
         if(client==null) client=new ShizukuDisplayClient(context,this::invalidate);
         return client;
+    }
+    synchronized JSONObject preview(int id) throws Exception {
+        if(id<=0||!leases.containsValue(id)||client==null||!"ready".equals(client.status()))
+            throw new ControlException(NOT_READY,"This private screen has finished or is unavailable");
+        return Json.obj("displayId",id,"image",client.preview(id));
+    }
+
+    JSONObject terminal(JSONObject args,String owner,Object generation) throws Exception {
+        final ShizukuDisplayClient active;final Integer id;
+        synchronized(this) {
+            active=client();shellRequests++;
+            id=leases.ownedBy(owner,generation)&&!leases.provisional(owner)?leases.get(owner):null;
+        }
+        try {
+            final JSONObject result;
+            synchronized(shellRpcLock){
+                result=active.terminal(args,owner,id==null?-1:id);
+                synchronized(this){activeShellSessions=result.optInt("active_sessions",activeShellSessions);scheduleShellCheck();}
+            }
+            if(id!=null)result.put("display_context",Json.obj("display_id",id,"width",720,"height",1280,"dpi",320,
+                "input_example","input -d "+id+" tap X Y","guidance","Use your assigned display for this task; shell commands are not display-filtered."));
+            return result;
+        } finally {synchronized(this){shellRequests--;if(leases.size()==0)closeWhenIdle=true;closeIfUnused();}}
+    }
+    private void scheduleShellCheck(){
+        if(activeShellSessions==0||shellCheckScheduled)return;
+        shellCheckScheduled=true;
+        cleanup.schedule(()->{
+            synchronized(this){shellCheckScheduled=false;if(activeShellSessions==0)return;}
+            try{terminal(Json.obj("action","context"),"shell-session-status",null);}
+            catch(Exception unavailable){synchronized(this){scheduleShellCheck();closeIfUnused();}}
+        },1,TimeUnit.SECONDS);
     }
 
     synchronized JSONObject acquire(String owner,Object generation) throws ControlException {
@@ -169,6 +204,7 @@ final class AgentDisplayCoordinator implements AutoCloseable {
     }
 
     synchronized void key(String owner,int code,Object generation) throws ControlException {int id=display(owner,generation);client().key(id,code);}
+    synchronized void text(String owner,String text,Object generation) throws ControlException {int id=display(owner,generation);client().text(id,text);}
 
     void release(String owner,Object generation) {
         final Integer id;
@@ -253,7 +289,7 @@ final class AgentDisplayCoordinator implements AutoCloseable {
     }
 
     private void closeIfUnused() {
-        if(!closeWhenIdle||!retiring.isEmpty()||leases.size()!=0)return;
+        if(shellRequests>0||activeShellSessions>0||!closeWhenIdle||!retiring.isEmpty()||leases.size()!=0)return;
         closeWhenIdle=false;
         if(client!=null) {ShizukuDisplayClient closing=client;client=null;closing.close();}
     }
@@ -262,6 +298,7 @@ final class AgentDisplayCoordinator implements AutoCloseable {
         // Binder death confirms that the old UserService no longer owns displays.
         for(int id:leases.ids())new AccessibilityProxyBackend(context,id).release();
         leases.clear();
+        activeShellSessions=0;
         retiring.clear();
         closeIfUnused();
     }
@@ -269,6 +306,14 @@ final class AgentDisplayCoordinator implements AutoCloseable {
     synchronized int activeCount() {return leases.size();}
     boolean accessibilityConnected() {return AccessibilityProxyBackend.connected(context);}
     String backendStatus() {ShizukuDisplayClient present=client;return present==null?ShizukuDisplayClient.prerequisites():present.status();}
+    JSONObject capabilities() {return capabilityStatus(backendStatus(),activeCount(),ShizukuDisplayClient.prerequisites());}
+    static JSONObject capabilityStatus(String backend,int active,String prerequisite) {
+        boolean authorized="idle".equals(prerequisite),available=authorized&&java.util.Set.of("idle","ready","binding","disconnected").contains(backend);
+        return Json.obj("backend",backend,"active",active,"maximum",MAX_DISPLAYS,"requires_shizuku",true,
+            "shizuku_running",!"shizuku_unavailable".equals(prerequisite),"shizuku_authorized",authorized,"available",available,
+            "status",available?(active>0?"active":"ready_on_demand"):(authorized?backend:prerequisite),
+            "note",available?"Idle means ready: no private display has been allocated yet. UI tools allocate and bind automatically; attempt the requested UI action. Do not treat idle, disconnected or requires_shizuku=true as a missing permission.":"Private UI is blocked. Check Shizuku running state and authorization; physical Accessibility is reported separately.");
+    }
 
     @Override public synchronized void close() {
         retiring.addAll(leases.owners());

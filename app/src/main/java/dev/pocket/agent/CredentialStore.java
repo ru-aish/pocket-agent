@@ -437,6 +437,15 @@ public final class CredentialStore {
             return sharedVoice;
         }
     }
+    public void removeKeyProvider(String mode) throws Exception { synchronized(LOCK) {
+        if(!NEBIUS.equals(mode)&&!OPENCODE.equals(mode))throw new IllegalArgumentException("Choose a key provider");
+        JSONObject current=read(),profiles=current.optJSONObject(PROFILES);if(profiles==null)profiles=new JSONObject();profiles.remove(mode);
+        if(mode.equals(current.optString("authMode"))){
+            for(String field:new String[]{"apiKey","accessToken","refreshToken","accountId","expiresAt","idToken","modelSource","reasoningEffortModel","reasoningEfforts"})current.remove(field);
+            current.put("authMode","scripted").put("model","scripted").put("endpoint","https://api.openai.com/v1").put("providerRevision",UUID.randomUUID().toString());
+        }
+        current.put(PROFILES,profiles);write(current);
+    } }
     private static JSONObject profileSnapshot(JSONObject source) throws Exception {
         JSONObject result = new JSONObject();
         for (String field : new String[]{"authMode", "endpoint", "apiKey", "model", "modelSource",

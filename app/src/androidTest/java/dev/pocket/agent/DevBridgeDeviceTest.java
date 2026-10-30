@@ -94,6 +94,7 @@ public class DevBridgeDeviceTest {
             assertTrue(request(null,"ping",null,true).contains("\"result\":{}"));
             String tools=request(null,"tools/list",null);
             assertTrue(tools,tools.contains("phone_capabilities"));
+            assertTrue("The installed runtime must expose the on-phone shell: "+tools,tools.contains("phone_shell"));
             assertTrue(tools,tools.contains("memory_search"));
             assertTrue(tools,tools.contains("subagent"));
             assertTrue(tools,tools.contains("debug_history"));

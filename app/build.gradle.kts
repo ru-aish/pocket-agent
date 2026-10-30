@@ -1,6 +1,12 @@
 plugins { id("com.android.application") }
 val ngrokNativeClasses = configurations.create("ngrokNativeClasses") { isTransitive = false }
 val ngrokAndroidArm64 = configurations.create("ngrokAndroidArm64") { isTransitive = false }
+val syncPocketUi = tasks.register<Sync>("syncPocketUi") {
+    from(rootProject.file("preview")) {
+        include("index.html", "style.css", "mark.svg", "connection.js", "drawer-swipe.js", "chat-titles.js", "short-title.mjs", "chat-view.js", "refresh-scheduler.js", "model-picker.js", "native-*.js", "native.css")
+    }
+    into(layout.buildDirectory.dir("generated/pocket-ui/ui"))
+}
 val extractNgrokArm64 = tasks.register<Copy>("extractNgrokArm64") {
     from({ ngrokAndroidArm64.map { zipTree(it) } }) { include("libngrok_java.so") }
     into(layout.buildDirectory.dir("generated/ngrok-jni/arm64-v8a"))
@@ -16,16 +22,17 @@ android {
     compileSdk = 36
     ndkVersion = "27.2.12479018"
     defaultConfig {
-        applicationId = if (providers.gradleProperty("isolatedDeviceValidation").isPresent)
+        applicationId = if (providers.gradleProperty("uiPreview").isPresent) "dev.pocket.agent.uipreview" else if (providers.gradleProperty("isolatedDeviceValidation").isPresent)
             "dev.pocket.agent.historyvalidation" else "dev.pocket.agent"
         minSdk = 31
         targetSdk = 36
-        versionCode = 13
-        versionName = "0.1.13-voice-account-sync.1"
+        versionCode = 31
+        versionName = "0.1.31-local-shell.2"
+        resValue("string", "app_name", if (providers.gradleProperty("uiPreview").isPresent) "Pocket Agent Preview" else "Pocket Agent")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("boolean", "DEVELOPMENT_TOOLS", "false")
     }
-    buildFeatures { buildConfig = true; aidl = true }
+    buildFeatures { buildConfig = true; aidl = true; resValues = true }
     signingConfigs {
         create("distribution") {
             storeFile = file(System.getenv("APK_KEYSTORE") ?: "missing-keystore.jks")
@@ -49,15 +56,23 @@ android {
             versionNameSuffix = "-dev"
             proguardFiles(file("src/development/proguard-rules.pro"))
             matchingFallbacks += listOf("release")
+            if (providers.gradleProperty("uiPreview").isPresent) {
+                signingConfig = signingConfigs.getByName("debug")
+                isDebuggable = true
+                isMinifyEnabled = false
+                isShrinkResources = false
+            }
         }
     }
     sourceSets.getByName("development").jniLibs.srcDir(layout.buildDirectory.dir("generated/ngrok-jni").get().asFile)
+    sourceSets.getByName("main").assets.srcDir(layout.buildDirectory.dir("generated/pocket-ui").get().asFile)
     splits { abi { isEnable=true; reset(); include("arm64-v8a", "x86_64"); isUniversalApk=true } }
-    testBuildType = if (providers.gradleProperty("isolatedDeviceValidation").isPresent) "debug" else if (providers.gradleProperty("devEmulatorTest").isPresent) "development" else if (providers.gradleProperty("voiceEmulatorTest").isPresent) "debug" else "release"
+    testBuildType = if (providers.gradleProperty("uiPreview").isPresent || providers.gradleProperty("isolatedDeviceValidation").isPresent) "debug" else if (providers.gradleProperty("devEmulatorTest").isPresent) "development" else if (providers.gradleProperty("voiceEmulatorTest").isPresent) "debug" else "release"
     lint { textReport=true; textOutput=file("build/reports/lint-results-release.txt") }
     packaging { jniLibs { useLegacyPackaging = true }; resources { excludes += "META-INF/DEPENDENCIES" } }
 }
 dependencies {
+    implementation("androidx.activity:activity:1.11.0")
     implementation(project(":android-platform"))
     implementation("androidx.work:work-runtime:2.10.5")
     implementation("com.caoccao.javet:javet-node-android-i18n:6.0.2")
@@ -80,3 +95,4 @@ dependencies {
 tasks.matching { it.name == "mergeDevelopmentJniLibFolders" }.configureEach {
     dependsOn(extractNgrokArm64)
 }
+tasks.named("preBuild").configure { dependsOn(syncPocketUi) }

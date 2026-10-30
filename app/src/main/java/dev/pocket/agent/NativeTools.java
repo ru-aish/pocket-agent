@@ -275,6 +275,7 @@ final class NativeTools implements AutoCloseable {
         if (name.equals("phone_screen")) return screenLease(args,owner);
         try {
             JSONObject spec=definition(name);validate(args,spec.getJSONObject("inputSchema"));
+            if(name.equals("phone_shell")){String action=args.getString("action");if(action.equals("acquire")||action.equals("release"))return screenLease(Json.obj("action",action),owner);return displays.terminal(args,owner,displayGeneration);}
             if(!spec.getJSONObject("annotations").getBoolean("readOnlyHint")) return operations.execute(args.getString("operation_id"),name,args,()->dispatch(name,args,owner));
             return dispatch(name,args,owner);
         } catch(ControlException e) {return Json.failure(e.code.name(),e.getMessage());}
@@ -368,7 +369,7 @@ final class NativeTools implements AutoCloseable {
             }catch(Exception denied) {}
         }
         boolean accessibility=displays.accessibilityConnected();
-        return Json.tool(Json.obj("version",BuildConfig.VERSION_NAME,"operation_prefix",operations.prefix(),"operation_nonce_min_length",8,"operation_nonce_max_length",48,"accessibility_connected",accessibility,"notification_listener_connected",PhoneNotifications.connected!=null,"interactive",context.getSystemService(PowerManager.class).isInteractive(),"locked",context.getSystemService(KeyguardManager.class).isKeyguardLocked(),"permissions",permissions,"phone_accounts",accounts,"sms_subscriptions",subscriptions,"media_sessions",media,"call_state",callState,"call_state_note","offhook includes dialing; it is not connection proof","preferred_order",Json.arr("direct_android_api","app_provided_action","semantic_accessibility","screen_gesture"),"physical_display",Json.obj("available",accessibility,"display_id",0,"requires_explicit_target",true,"launch_via_accessibility",true),"virtual_displays",Json.obj("backend",displays.backendStatus(),"active",displays.activeCount(),"maximum",AgentDisplayCoordinator.MAX_DISPLAYS,"requires_shizuku",true)));
+        return Json.tool(Json.obj("version",BuildConfig.VERSION_NAME,"operation_prefix",operations.prefix(),"operation_nonce_min_length",8,"operation_nonce_max_length",48,"accessibility_connected",accessibility,"notification_listener_connected",PhoneNotifications.connected!=null,"interactive",context.getSystemService(PowerManager.class).isInteractive(),"locked",context.getSystemService(KeyguardManager.class).isKeyguardLocked(),"permissions",permissions,"phone_accounts",accounts,"sms_subscriptions",subscriptions,"media_sessions",media,"call_state",callState,"call_state_note","offhook includes dialing; it is not connection proof","preferred_order",Json.arr("direct_android_api","app_provided_action","semantic_accessibility","screen_gesture"),"physical_display",Json.obj("available",accessibility,"display_id",0,"requires_explicit_target",true,"launch_via_accessibility",true),"shell",Json.obj("tool","phone_shell","backend",displays.backendStatus(),"requires_shizuku",true,"requires_pc",false,"command_allowlist",false,"available_to_all_agents",true),"virtual_displays",displays.capabilities()));
     }
     private JSONObject dispatch(String name,JSONObject a,String owner) throws Exception {
         switch(name) {
@@ -378,7 +379,16 @@ final class NativeTools implements AutoCloseable {
                 JSONObject s=a.optJSONObject("selector");ControlBackend.Selector selector=s==null?null:new ControlBackend.Selector(string(s,"resource_id"),string(s,"text"),string(s,"description"));
                 ControlBackend.Action action=new ControlBackend.Action(ControlBackend.Kind.valueOf(a.getString("kind").toUpperCase(java.util.Locale.ROOT)),a.getString("snapshot_id"),integer(a,"x"),integer(a,"y"),integer(a,"end_x"),integer(a,"end_y"),a.optInt("duration_ms",600),string(a,"text"),a.optBoolean("replace",true),string(a,"key"),string(a,"direction"),selector);
                 ControlBackend.Result result;AccessibilityProxyBackend target=screen(owner,a);
-                if(action.kind()==ControlBackend.Kind.KEY && !"enter".equals(action.key()) && !physical(a)) {
+                if("keyboard".equals(a.optString("input_method"))) {
+                    if(action.kind()!=ControlBackend.Kind.TYPE||physical(a))throw new ControlException(UNSUPPORTED,"Keyboard text is supported only for type on a private display");
+                    String text=action.text();
+                    if(text==null||text.isEmpty()||text.length()>2000)throw new ControlException(INVALID_ARGUMENT,"Keyboard text requires 1..2000 characters");
+                    if(android.view.KeyCharacterMap.load(android.view.KeyCharacterMap.VIRTUAL_KEYBOARD).getEvents(text.toCharArray())==null)
+                        throw new ControlException(UNSUPPORTED,"These characters cannot be typed by the Android virtual keyboard; no text was sent");
+                    target.prepareKeyboardText(action);
+                    displays.text(owner,text,displayGeneration);
+                    result=new ControlBackend.Result("dispatched","Real keyboard text dispatched; observe and reopen to verify persistence");
+                }else if(action.kind()==ControlBackend.Kind.KEY && !"enter".equals(action.key()) && !physical(a)) {
                     target.validateAction(action);
                     // Real-device MIUI A/B testing showed /system/bin/input -d is filtered while
                     // the physical phone is asleep/keyguard-locked, even though the leased

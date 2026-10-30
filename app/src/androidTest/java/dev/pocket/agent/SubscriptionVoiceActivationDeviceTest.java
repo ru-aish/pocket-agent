@@ -16,13 +16,16 @@ import android.speech.tts.TextToSpeech;
 import android.speech.tts.UtteranceProgressListener;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.TextView;
+import android.webkit.WebView;
 import android.util.Base64;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.platform.app.InstrumentationRegistry;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.Locale;
 import org.json.JSONObject;
 import org.junit.Test;
@@ -179,24 +182,88 @@ public final class SubscriptionVoiceActivationDeviceTest {
         }
     }
 
-    private static View findText(View view, String text) {
-        if (view instanceof TextView && text.contentEquals(((TextView) view).getText())) return view;
+    private static WebView findWebView(View view) {
+        if (view instanceof WebView) return (WebView) view;
         if (view instanceof ViewGroup) {
             ViewGroup group = (ViewGroup) view;
             for (int i = 0; i < group.getChildCount(); i++) {
-                View found = findText(group.getChildAt(i), text);
+                WebView found = findWebView(group.getChildAt(i));
                 if (found != null) return found;
             }
         }
         return null;
     }
 
-    @Test public void dedicatedButtonLeavesPersistentFailureWithoutReplacingAssistantVoice() throws Exception {
+    private static String evaluateJavascript(WebView webView, String script) throws Exception {
+        CountDownLatch completed = new CountDownLatch(1);
+        AtomicReference<String> result = new AtomicReference<>();
+        InstrumentationRegistry.getInstrumentation().runOnMainSync(() ->
+                webView.evaluateJavascript(script, value -> {
+                    result.set(value);
+                    completed.countDown();
+                }));
+        assertTrue("WebView JavaScript did not complete", completed.await(5, TimeUnit.SECONDS));
+        return result.get();
+    }
+
+    @Test public void systemBackReturnsThroughMenusBeforeLeavingChat() throws Exception {
+        var instrumentation = InstrumentationRegistry.getInstrumentation();
+        Activity activity = instrumentation.startActivitySync(
+                new Intent(context(), MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        try {
+            WebView web = findWebView(activity.getWindow().getDecorView());
+            assertNotNull(web);
+            long until = SystemClock.elapsedRealtime() + 12_000L;
+            while (!"true".equals(evaluateJavascript(web, "typeof window.pocketBack === 'function'"))
+                    && SystemClock.elapsedRealtime() < until) SystemClock.sleep(100);
+            assertEquals("true", evaluateJavascript(web,
+                    "(()=>{document.querySelector('[data-action=settings]').click();return !document.querySelector('#settings-screen').hidden;})()"));
+            evaluateJavascript(web, "Array.from(document.querySelectorAll('.settings-row')).find(n=>n.textContent.includes('Background work')).click()");
+            evaluateJavascript(web, "Array.from(document.querySelectorAll('.settings-row')).find(n=>n.textContent.includes('Schedules, subagents')).click()");
+            assertEquals("false", evaluateJavascript(web, "document.querySelector('#activity-screen').hidden"));
+            instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK);
+            assertEquals("true", evaluateJavascript(web, "!document.querySelector('#settings-screen').hidden && document.querySelector('#settings-screen').textContent.includes('Let Pocket do the legwork.')"));
+            instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK);
+            assertEquals("true", evaluateJavascript(web, "!document.querySelector('#settings-screen').hidden && document.querySelector('#settings-screen').textContent.includes('Your assistant')"));
+            instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK);
+            assertEquals("true", evaluateJavascript(web, "document.querySelector('#settings-screen').hidden && document.querySelector('#activity-screen').hidden"));
+            assertFalse(activity.isFinishing());
+        } finally { instrumentation.runOnMainSync(activity::finish); }
+    }
+
+    @Test public void manualVoiceTapClearsRetainedInvitationBeforeRequestingPermissions() throws Exception {
+        Context ctx=context();
+        SharedPreferences secrets=ctx.getSharedPreferences("provider-secrets",Context.MODE_PRIVATE);
+        String prior=secrets.getString("encrypted",null);
+        try {
+            assertTrue(secrets.edit().remove("encrypted").commit());
+            ctx.stopService(new Intent(ctx,SubscriptionVoiceService.class));
+            Activity activity=InstrumentationRegistry.getInstrumentation().startActivitySync(
+                new Intent(ctx,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+            try {
+                java.lang.reflect.Field retained=MainActivity.class.getDeclaredField("pendingVoiceInvitation");retained.setAccessible(true);
+                java.lang.reflect.Method tap=MainActivity.class.getDeclaredMethod("toggleVoiceConversation");tap.setAccessible(true);
+                InstrumentationRegistry.getInstrumentation().runOnMainSync(()->{
+                    try {retained.set(activity,"stale-invitation-id");tap.invoke(activity);}
+                    catch(Exception failure){throw new AssertionError(failure);}
+                });
+                assertNull("A manual tap must never reuse an old invitation",retained.get(activity));
+            } finally {InstrumentationRegistry.getInstrumentation().runOnMainSync(activity::finish);}
+        } finally {
+            ctx.stopService(new Intent(ctx,SubscriptionVoiceService.class));
+            SharedPreferences.Editor restore=secrets.edit();if(prior==null)restore.remove("encrypted");else restore.putString("encrypted",prior);assertTrue(restore.commit());
+        }
+    }
+
+    @Test public void mainChatVoiceControlOpensSetupWhenAccountIsMissing() throws Exception {
         Context ctx = context();
         SharedPreferences protectedPrefs = ctx.getSharedPreferences("provider-secrets", Context.MODE_PRIVATE);
         String prior = protectedPrefs.getString("encrypted", null);
         try {
+            ctx.stopService(new Intent(ctx, SubscriptionVoiceService.class));
             assertTrue(protectedPrefs.edit().remove("encrypted").commit());
+            assertTrue("Test setup must leave the voice account disconnected",
+                    new CredentialStore(ctx).getVoiceCodex().optString("accessToken").isEmpty());
             SubscriptionVoiceFailureStore.ready(ctx);
             InstrumentationRegistry.getInstrumentation().getUiAutomation()
                     .grantRuntimePermission(ctx.getPackageName(), Manifest.permission.RECORD_AUDIO);
@@ -206,29 +273,45 @@ public final class SubscriptionVoiceActivationDeviceTest {
             Activity activity = InstrumentationRegistry.getInstrumentation().startActivitySync(
                     new Intent(ctx, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
             try {
-                java.lang.reflect.Field pending = MainActivity.class.getDeclaredField("pendingVoiceInvitation");
-                pending.setAccessible(true);
-                InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
-                    try { pending.set(activity, "11111111-2222-4333-8444-555555555555"); }
-                    catch (IllegalAccessException failure) { throw new AssertionError(failure); }
-                    View start = findText(activity.getWindow().getDecorView(), "Start Codex voice");
-                    assertNotNull("Main chat must expose its own Codex voice button", start);
-                    assertTrue(start.performClick());
-                    try { assertNull("A manual start must clear a stale invitation attempt", pending.get(activity)); }
-                    catch (IllegalAccessException failure) { throw new AssertionError(failure); }
-                });
-                boolean found = false;
-                long until = SystemClock.elapsedRealtime() + 12_000L;
-                while (SystemClock.elapsedRealtime() < until) {
-                    if (SubscriptionVoiceFailureStore.lastStatus(ctx)
-                            .contains("ChatGPT voice sign-in required")) {
-                        found = true;
-                        break;
-                    }
+                WebView webView = findWebView(activity.getWindow().getDecorView());
+                assertNotNull("Main chat WebView must be present", webView);
+                String domReady = "false";
+                long domUntil = SystemClock.elapsedRealtime() + 12_000L;
+                while (SystemClock.elapsedRealtime() < domUntil) {
+                    domReady = evaluateJavascript(webView, "!!document.querySelector('#message')");
+                    if ("true".equals(domReady)) break;
+                    SystemClock.sleep(100L);
+                }
+                assertEquals("Main chat DOM must finish loading", "true", domReady);
+                assertEquals("true", evaluateJavascript(webView,
+                        "(()=>{localStorage.removeItem('pocket-native-draft');const input=document.querySelector('#message');if(!input)return false;input.value='';input.dispatchEvent(new Event('input',{bubbles:true}));return true;})()"));
+                String expectedLabel = JSONObject.quote("Start Codex voice");
+                String label = "";
+                long pageUntil = SystemClock.elapsedRealtime() + 12_000L;
+                while (SystemClock.elapsedRealtime() < pageUntil) {
+                    label = evaluateJavascript(webView,
+                            "document.querySelector('#send')?.getAttribute('aria-label') || ''");
+                    if (expectedLabel.equals(label)) break;
                     SystemClock.sleep(100);
                 }
-                assertTrue("Button-start failure must remain visible after service teardown: "
-                        + SubscriptionVoiceFailureStore.lastStatus(ctx), found);
+                assertEquals("Main chat must expose its own Codex voice button", expectedLabel, label);
+                assertEquals("true", evaluateJavascript(webView,
+                        "(()=>{const button=document.querySelector('#send');if(!button)return false;button.click();return true;})()"));
+                boolean setupVisible = false;
+                String setupState = "false";
+                long setupUntil = SystemClock.elapsedRealtime() + 5_000L;
+                while (SystemClock.elapsedRealtime() < setupUntil) {
+                    setupState = evaluateJavascript(webView,
+                            "(()=>{const screen=document.querySelector('#settings-screen');return !!screen&&!screen.hidden&&screen.textContent.includes('A conversation, out loud.');})()");
+                    if ("true".equals(setupState)) { setupVisible = true; break; }
+                    SystemClock.sleep(50L);
+                }
+                assertTrue("The missing voice account should route to setup, not start a broken session; state="
+                        + setupState, setupVisible);
+                assertFalse("No voice session should start without a connected account",
+                        SubscriptionVoiceService.isActive());
+                assertEquals("Setup guidance should not be recorded as a failed voice activation",
+                        "", SubscriptionVoiceFailureStore.lastStatus(ctx));
                 Intent assistant = SubscriptionVoiceSettings.wakeIntent(ctx);
                 assertEquals(VoiceListeningService.class.getName(), assistant.getComponent().getClassName());
             } finally {
