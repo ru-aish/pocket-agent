@@ -137,7 +137,8 @@ export function desktopPrompt(context:Context) {
   const payload=JSON.stringify({systemPrompt,tools,messages});
   if(payload.length>2_000_000)throw new Error('Desktop context limit reached. Saved conversation was retained; start a new chat.');
   if(images.length>8)throw new Error('Desktop accepts at most eight images per inference request.');
-  return {text:envelopeInstruction+'\n\nPocketAgent context:\n'+payload,images,tools};
+  const instruction=tools.length?envelopeInstruction:'You are the inference engine for PocketAgent. Follow the supplied system prompt and conversation. No tools are available: do not use ChatGPT connectors or native tools. Return your answer directly as text.';
+  return {text:instruction+'\n\nPocketAgent context:\n'+payload,images,tools};
 }
 
 export function parseDesktopAnswer(text:string,tools:Context['tools']) {
@@ -191,6 +192,7 @@ export function desktopStream(model:Model<any>,context:Context,owner:string,effo
     const fetcher=options.fetch??fetch;
     const requestId=randomUUID(),binding='__pocket_chatgpt_'+requestId.replaceAll('-','');
     let cdp:DesktopCdp|undefined,conversationId:string|null=null,finished=false,submitted=false;
+    let prompt:ReturnType<typeof desktopPrompt>;
     let rawText='',visible='',thinking='',textIndex=-1,thinkingIndex=-1;
     let notify:()=>void=()=>{};
     let disconnected=false;
@@ -214,7 +216,7 @@ export function desktopStream(model:Model<any>,context:Context,owner:string,effo
       if(event.channel&&event.channel!=='final')return;
       rawText=event.text??rawText;
       if(rawText.length>2_000_000)throw new Error('Desktop response exceeded its size limit.');
-      const next=visibleText(rawText);
+      const next=prompt.tools.length?visibleText(rawText):rawText;
       if(!next.startsWith(visible))return;
       if(textIndex<0&&next){textIndex=output.content.length;output.content.push({type:'text',text:''});stream.push({type:'text_start',contentIndex:textIndex,partial:output});}
       if(textIndex>=0){const delta=next.slice(visible.length);visible=next;(output.content[textIndex] as any).text=next;if(delta)stream.push({type:'text_delta',contentIndex:textIndex,delta,partial:output});}
@@ -235,8 +237,8 @@ export function desktopStream(model:Model<any>,context:Context,owner:string,effo
     };
     const abort=()=>{notify();cdp?.interruptPending();};signal.addEventListener('abort',abort,{once:true});
     try{
-      signal.throwIfAborted();await connect();
-      const prompt=desktopPrompt(context),images=[];
+      signal.throwIfAborted();prompt=desktopPrompt(context);await connect();
+      const images=[];
       for(const image of prompt.images){signal.throwIfAborted();images.push(await uploadImage(cdp!,image,signal,fetcher));}
       signal.throwIfAborted();stream.push({type:'start',partial:output});
       const messageId=randomUUID();
@@ -283,7 +285,8 @@ export function desktopStream(model:Model<any>,context:Context,owner:string,effo
         }else await wait();
       }
       if(eventError)throw eventError;
-      const answer=parseDesktopAnswer(rawText,prompt.tools);
+      const answer=prompt.tools.length?parseDesktopAnswer(rawText,prompt.tools):{text:rawText,toolCalls:[]};
+      if(!answer.text.trim()&&!answer.toolCalls.length)throw new Error('Desktop returned no answer.');
       if(thinkingIndex>=0)stream.push({type:'thinking_end',contentIndex:thinkingIndex,content:thinking,partial:output});
       if(textIndex<0&&answer.text){textIndex=output.content.length;output.content.push({type:'text',text:answer.text});stream.push({type:'text_start',contentIndex:textIndex,partial:output});stream.push({type:'text_delta',contentIndex:textIndex,delta:answer.text,partial:output});}
       if(textIndex>=0){(output.content[textIndex] as any).text=answer.text;stream.push({type:'text_end',contentIndex:textIndex,content:answer.text,partial:output});}

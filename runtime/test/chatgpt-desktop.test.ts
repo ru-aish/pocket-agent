@@ -38,7 +38,7 @@ function fixture(t:any,answer:(request:any,index:number)=>{text:string;toolCalls
       requests.push(args.request);const response=answer(args.request,requests.length);
       if(dropAtStart&&requests.length===1)for(const socket of [...sockets])socket.close();
       if(response)queueMicrotask(()=>{
-        const text=JSON.stringify(response),conversation_id='fixture-conversation-'+requests.length;
+        const text=args.request.messages[0].content.parts.at(-1).includes('Return your answer directly as text.')?response.text:JSON.stringify(response),conversation_id='fixture-conversation-'+requests.length;
         for(const length of [Math.floor(text.length/2),text.length])args.onUpdate({conversation_id,message:{id:'fixture-answer',author:{role:'assistant'},channel:'final',recipient:'all',content:{content_type:'text',parts:[text.slice(0,length)]},status:'finished_successfully',end_turn:length===text.length}});
         args.onComplete({conversation_id});
       });
@@ -85,7 +85,7 @@ test('Pi executes a desktop-requested tool once and supplies its actual result t
 
 test('invalid desktop output ends in error without executing any tools or resending',{timeout:20000},async t=>{
   const f=fixture(t,()=>({text:'Bad call',toolCalls:[{name:'not_granted',arguments:{}}]}));
-  const source=makeStream(config,{},'worker');const result=await (await source(modelFor(config,{}),{messages:[],tools:[]},{fetch:f.fetcher,signal:t.signal})).result();
+  const source=makeStream(config,{},'worker');const result=await (await source(modelFor(config,{}),{messages:[],tools:[{name:'allowed',description:'Granted tool',parameters:Type.Object({})}]},{fetch:f.fetcher,signal:t.signal})).result();
   assert.equal(result.stopReason,'error');assert.equal(f.requests.length,1);assert.equal(result.content.some(p=>p.type==='toolCall'),false);
 });
 
