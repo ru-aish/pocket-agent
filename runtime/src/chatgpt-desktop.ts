@@ -140,7 +140,8 @@ export function desktopPrompt(context:Context) {
   if(payload.length>2_000_000)throw new Error('Desktop context limit reached. Saved conversation was retained; start a new chat.');
   if(images.length>8)throw new Error('Desktop accepts at most eight images per inference request.');
   const instruction=tools.length?envelopeInstruction:'You are the inference engine for PocketAgent. Follow the supplied system prompt and conversation. No tools are available: do not use ChatGPT connectors or native tools. Return your answer directly as text.';
-  return {text:instruction+'\n\nPocketAgent context:\n'+payload,images,tools};
+  const nextStep=tools.length?'\n\nContinue the supplied conversation now by producing its next assistant response. The last supplied user message or tool result is the active task, not a transcript to summarize. The tools listed above are available through PocketAgent: put requests in toolCalls and the host will execute them after this response. If the active task needs a tool, request it now instead of ending with a statement that it has not been done. After a real tool result, use that result to continue. Return only the fenced JSON object described above.':'';
+  return {text:instruction+'\n\nPocketAgent context:\n'+payload+nextStep,images,tools};
 }
 
 export function parseDesktopAnswer(text:string,tools:Context['tools']) {
