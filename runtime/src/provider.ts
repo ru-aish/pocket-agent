@@ -250,7 +250,7 @@ export function makeStream(config: ProviderConfig, credentials: ProviderCredenti
         const requested=reasoningOverride??config.reasoningEffort;
         const levels=supportedReasoning??(credentials.reasoningEffortModel===model.id?credentials.reasoningEfforts:undefined);
         const effort=levels ? levels.includes(requested??'')?requested:levels.includes('standard')?'standard':levels[0] : requested;
-        return desktopStream(model,context,owner,effort,options);
+        return desktopStream(model,context,owner,effort,{...options,effortVerified:levels!==undefined});
       }
       let apiKey = credentials.apiKey;
       if (account) apiKey = (await ensureCodexCredentials(credentials,{signal:options?.signal,fetch:options?.fetch})).accessToken;

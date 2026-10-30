@@ -171,6 +171,13 @@ test('desktop discovery respects cancellation during native model RPC',{timeout:
 test('native advertised API-style thinking levels are preserved and serialized',{timeout:20000},async t=>{
   const f=fixture(t,()=>({text:'OK',toolCalls:[]}),false,false,false,{models:[{slug:'gpt-6-thinking',thinking_efforts:['low','high']}]});
   assert.deepEqual((await desktopModels(config.endpoint,f.fetcher,t.signal))[0].supportedReasoningLevels,['low','high']);
-  const result=await(await makeStream({...config,reasoningEffort:'high'},{},'main')(modelFor(config,{}),{messages:[]},{fetch:f.fetcher,signal:t.signal})).result();
+  const result=await(await makeStream({...config,reasoningEffort:'high'},{},'main','high',['low','high'])(modelFor(config,{}),{messages:[]},{fetch:f.fetcher,signal:t.signal})).result();
   assert.equal(result.stopReason,'stop',result.errorMessage);assert.equal(f.requests[0].thinking_effort,'high');
+});
+
+
+test('unverified API-style default efforts are omitted from native requests',{timeout:20000},async t=>{
+  const f=fixture(t,()=>({text:'OK',toolCalls:[]}));
+  const result=await(await makeStream({...config,reasoningEffort:'low'},{},'main')(modelFor(config,{}),{messages:[]},{fetch:f.fetcher,signal:t.signal})).result();
+  assert.equal(result.stopReason,'stop',result.errorMessage);assert.equal(f.requests[0].thinking_effort,undefined);
 });

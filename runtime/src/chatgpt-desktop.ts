@@ -198,7 +198,7 @@ async function uploadImage(cdp:DesktopCdp,image:{data:string;mimeType:string},si
   return {...file,...dimensions,id:grant.file_id};
 }
 
-export function desktopStream(model:Model<any>,context:Context,owner:string,effort:string|undefined,options:{signal?:AbortSignal;fetch?:typeof fetch}={}) {
+export function desktopStream(model:Model<any>,context:Context,owner:string,effort:string|undefined,options:{signal?:AbortSignal;fetch?:typeof fetch;effortVerified?:boolean}={}) {
   const stream=new AssistantMessageEventStream();
   const output:AssistantMessage={role:'assistant',api:model.api,provider:model.provider,model:model.id,content:[],timestamp:Date.now(),stopReason:'stop',
     usage:{input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}}};
@@ -272,7 +272,7 @@ export function desktopStream(model:Model<any>,context:Context,owner:string,effo
       for(const image of prompt.images){signal.throwIfAborted();images.push(await uploadImage(cdp!,image,signal,fetcher));}
       signal.throwIfAborted();stream.push({type:'start',partial:output});
       const messageId=randomUUID();
-      const request={action:'next',model:model.id,...(effort&&thinkingEfforts.has(effort)?{thinking_effort:effort}:{}),supported_encodings:['v1'],
+      const request={action:'next',model:model.id,...(effort&&thinkingEfforts.has(effort)&&(options.effortVerified||effort==='standard'||effort==='extended')?{thinking_effort:effort}:{}),supported_encodings:['v1'],
         timezone:Intl.DateTimeFormat().resolvedOptions().timeZone,timezone_offset_min:-new Date().getTimezoneOffset(),
         messages:[{id:messageId,author:{role:'user'},content:{content_type:images.length?'multimodal_text':'text',parts:[...images.map(image=>({content_type:'image_asset_pointer',asset_pointer:(image.id.startsWith('file_')?'sediment://':'file-service://')+image.id,width:image.width,height:image.height,size_bytes:image.size})),prompt.text]},
           create_time:Date.now()/1000,end_turn:null,recipient:'all',status:'finished_successfully',weight:1,...(images.length?{metadata:{attachments:images}}:{})}]};
