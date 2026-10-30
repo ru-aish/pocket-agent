@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {Agent} from '@earendil-works/pi-agent-core';
 import {Type} from 'typebox';
-import {desktopEndpoint,desktopPrompt,parseDesktopAnswer} from '../src/chatgpt-desktop.js';
+import {DesktopCdp,desktopEndpoint,desktopPrompt,parseDesktopAnswer} from '../src/chatgpt-desktop.js';
 import {makeStream,modelFor} from '../src/provider.js';
 import {discoverProviderModels} from '../src/model-catalog.js';
 
@@ -53,6 +53,7 @@ function fixture(t:any,answer:(request:any,index:number)=>{text:string;toolCalls
     constructor(readonly url:any){super();connections++;sockets.add(this);queueMicrotask(()=>{this.readyState=1;this.dispatchEvent(new Event('open'));});}
     send(raw:string){const msg=JSON.parse(raw);void(async()=>{
       let result:any={};
+      if(msg.params?.expression==='__never_resolve')return;
       try{
         if(msg.method==='Runtime.addBinding')window[msg.params.name]=(payload:string)=>{for(const socket of sockets)if(socket.readyState===1)socket.dispatchEvent(new MessageEvent('message',{data:JSON.stringify({method:'Runtime.bindingCalled',params:{name:msg.params.name,payload}})}));};
         else if(msg.method==='Runtime.evaluate')result={result:{value:await vm.runInContext(msg.params.expression,context)}};
@@ -129,4 +130,11 @@ test('late close events from the old connection cannot retire a recovered active
   const f=fixture(t,()=>({text:'Resumed on the replacement socket.',toolCalls:[]}),true,false,true);
   const stream=await makeStream(config,{},'active-recovery')(modelFor(config,{}),{messages:[]},{fetch:f.fetcher,signal:t.signal});
   const result=await stream.result();assert.equal(result.stopReason,'stop',result.errorMessage);assert.equal(f.requests.length,1);assert.equal(f.connections(),2);
+});
+
+
+test('a CDP command timeout marks the transport unavailable for request reconciliation',{timeout:10000},async t=>{
+  const f=fixture(t,()=>({text:'unused',toolCalls:[]}));const events:string[]=[];
+  const cdp=await DesktopCdp.connect(config.endpoint,method=>events.push(method),t.signal,f.fetcher);
+  try{await assert.rejects(cdp.call('Runtime.evaluate',{expression:'__never_resolve'},2),/timed out/);assert.ok(events.includes('timeout'));}finally{cdp.close();}
 });

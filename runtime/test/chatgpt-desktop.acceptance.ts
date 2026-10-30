@@ -79,12 +79,13 @@ try {
         const check=()=>{
           const state=runtime.state();
           if(state.lastError){clearInterval(timer);reject(Error(state.lastError));return;}
+          if(!state.active&&state.messages.some((message:any)=>message.role==='assistant')&&!JSON.stringify(state.messages).includes(nonce)){clearInterval(timer);reject(Error('The workflow stopped before returning its worker receipt.'));return;}
           if(state.tasks.some((task:any)=>task.status==='completed')&&!state.busy&&JSON.stringify(state.messages).includes(nonce)){clearInterval(timer);resolve();}
         };
         const timer=setInterval(check,250);signal.addEventListener('abort',()=>{clearInterval(timer);reject(Error('Subagent acceptance timed out.'));},{once:true});check();
       });
       assert.equal(toolCalls,1);assert.equal(runtime.state().tasks.length,1);assert.ok(events.some(event=>event.type==='state'&&event.state.tasks?.some((task:any)=>task.status==='completed')));report.pocketAgentWorkerCompleted=true;report.workerResultDeliveredToMain=true;
-    } finally{runtime.dispatch(JSON.stringify({action:'stop_all'}));runtime.dispatch(JSON.stringify({action:'prepare_shutdown'}));}
+    } finally{const state=runtime.state();report.runtime={busy:state.busy,lastError:state.lastError,toolCalls,tasks:state.tasks.map((task:any)=>({status:task.status,output:task.output})),messages:state.messages.slice(-5)};runtime.dispatch(JSON.stringify({action:'stop_all'}));runtime.dispatch(JSON.stringify({action:'prepare_shutdown'}));}
   } else throw Error('Unknown acceptance stage.');
   report.passed=true;
 } catch(error){report.error=error instanceof Error?error.message:'Acceptance failed.';process.exitCode=1;}

@@ -85,17 +85,17 @@ export class DesktopCdp {
     });
     return new DesktopCdp(socket,onEvent);
   }
-  call(method:string,params:Record<string,unknown>={},timeout=30000):Promise<any> {
+  call(method:string,params:Record<string,unknown>={},timeout=90000):Promise<any> {
     if(this.socket.readyState!==WebSocket.OPEN)return Promise.reject(new Error('Desktop disconnected.'));
     if(this.pending.size>=16)return Promise.reject(new Error('Too many pending desktop commands.'));
     const id=++this.next;
     return new Promise((resolve,reject)=>{
-      const timer=setTimeout(()=>{this.pending.delete(id);reject(new Error('Desktop command timed out.'));},timeout);
+      const timer=setTimeout(()=>{this.pending.delete(id);this.onEvent('timeout',{method});reject(new Error('Desktop command timed out.'));},timeout);
       this.pending.set(id,{resolve,reject,timer});
       try{this.socket.send(JSON.stringify({id,method,params}));}catch{clearTimeout(timer);this.pending.delete(id);reject(new Error('Desktop disconnected.'));}
     });
   }
-  async evaluate<T=any>(expression:string,timeout=30000):Promise<T> {
+  async evaluate<T=any>(expression:string,timeout=90000):Promise<T> {
     const result=await this.call('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true},timeout);
     if(result.exceptionDetails)throw new Error('The desktop operation failed. Check its sign-in and availability.');
     return result.result?.value;
@@ -228,7 +228,7 @@ export function desktopStream(model:Model<any>,context:Context,owner:string,effo
       disconnected=false;const generation=++connectionGeneration;
       cdp=await DesktopCdp.connect(model.baseUrl,(method,params)=>{
         if(generation!==connectionGeneration)return;
-        if(method==='disconnected'||method==='Runtime.executionContextsCleared'||method==='Inspector.detached'){disconnected=true;notify();return;}
+        if(method==='disconnected'||method==='timeout'||method==='Runtime.executionContextsCleared'||method==='Inspector.detached'){disconnected=true;notify();return;}
         if(method!=='Runtime.bindingCalled'||params?.name!==binding)return;
         try{update(JSON.parse(params.payload));}catch(error){eventError=error instanceof Error?error:new Error('Desktop stream failed.');}notify();
       },signal,fetcher);
@@ -236,7 +236,7 @@ export function desktopStream(model:Model<any>,context:Context,owner:string,effo
     };
     const stop=async()=>{
       if(!submitted||!cdp)return;
-      await cdp.evaluate(`(async()=>{const states=window[Symbol.for('pocket.chatgpt.requests.v1')];const s=states?.get(${JSON.stringify(requestId)});if(!s)return false;s.cancelled=true;s.startup.abort();const handle=await Promise.resolve(s.handle).catch(()=>null);try{if(s.conversationId){const c=window[Symbol.for('terminal-mcp.chat-runtime.client.v5')];await c?.stopCompletion?.({conversation_id:s.conversationId,exclude_async_types:[]});}}finally{const client=window[Symbol.for('terminal-mcp.chat-runtime.client.v5')];if(handle?.streamRequestId)client?.cancelStream?.(handle.streamRequestId);}return true;})()`,5000).catch(()=>{});
+      await cdp.evaluate(`(async()=>{const cancelKey=Symbol.for('pocket.chatgpt.cancelled.v1');window[cancelKey] ||= new Map();window[cancelKey].set(${JSON.stringify(requestId)},Date.now());while(window[cancelKey].size>256)window[cancelKey].delete(window[cancelKey].keys().next().value);const states=window[Symbol.for('pocket.chatgpt.requests.v1')];const s=states?.get(${JSON.stringify(requestId)});if(!s)return false;s.cancelled=true;s.startup.abort();const handle=await Promise.resolve(s.handle).catch(()=>null);try{if(s.conversationId){const c=window[Symbol.for('terminal-mcp.chat-runtime.client.v5')];await c?.stopCompletion?.({conversation_id:s.conversationId,exclude_async_types:[]});}}finally{const client=window[Symbol.for('terminal-mcp.chat-runtime.client.v5')];if(handle?.streamRequestId)client?.cancelStream?.(handle.streamRequestId);}return true;})()`,5000).catch(()=>{});
     };
     const abort=()=>{notify();cdp?.interruptPending();};signal.addEventListener('abort',abort,{once:true});
     try{
@@ -253,10 +253,11 @@ export function desktopStream(model:Model<any>,context:Context,owner:string,effo
       submitted=true;
       try { await cdp!.evaluate(`(async()=>{${rendererDiscovery}
         const key=Symbol.for('pocket.chatgpt.requests.v1');window[key] ||= new Map();const states=window[key];
+        const cancelled=window[Symbol.for('pocket.chatgpt.cancelled.v1')];if(cancelled?.has(${JSON.stringify(requestId)}))return false;
         const r=await resolveClient();
         for(const [id,s] of states)if(Date.now()-s.createdAt>900000){s.cancelled=true;s.startup.abort();if(s.conversationId)void r.client.stopCompletion({conversation_id:s.conversationId,exclude_async_types:[]}).catch(()=>{});Promise.resolve(s.handle).then(handle=>{if(handle?.streamRequestId)r.client.cancelStream(handle.streamRequestId);}).catch(()=>{});states.delete(id);}
         if([...states.values()].filter(s=>!s.complete&&!s.cancelled).length>=4||states.size>=64)throw Error('Desktop concurrency limit reached');
-        const s={createdAt:Date.now(),id:${JSON.stringify(requestId)},owner:${JSON.stringify(createHash('sha256').update(owner).digest('hex'))},binding:${JSON.stringify(binding)},conversationId:null,updates:new Map(),complete:false,cancelled:false,startup:new AbortController()};states.set(s.id,s);
+        if(cancelled?.has(${JSON.stringify(requestId)}))return false;const s={createdAt:Date.now(),id:${JSON.stringify(requestId)},owner:${JSON.stringify(createHash('sha256').update(owner).digest('hex'))},binding:${JSON.stringify(binding)},conversationId:null,updates:new Map(),complete:false,cancelled:false,startup:new AbortController()};states.set(s.id,s);
         const emit=(kind,value)=>{if(s.cancelled)return;const v=value&&typeof value==='object'?value:{};const candidate=v.message||v.data||v;s.conversationId=v.conversation_id||v.conversationId||candidate.conversation_id||candidate.conversationId||s.conversationId;
           let normalized;try{const __name=value=>value;normalized=(${normalizeStreamMessage.toString()})(value,'pocket-desktop');}catch{normalized={};kind='error';}const event={...normalized,kind,conversationId:s.conversationId};if(normalized.messageId)s.updates.set(normalized.messageId,event);s.last=event;if(kind==='complete'||kind==='error')s.complete=true;if(typeof window[s.binding]==='function')window[s.binding](JSON.stringify(event));};
         s.handle=r.client.startCompletionStream({request:${JSON.stringify(request)},startupSignal:s.startup.signal,onUpdate:v=>emit('update',v),onComplete:v=>emit('complete',v),onError:v=>emit('error',v)});
