@@ -66,7 +66,7 @@ try {
         else if(method==='autonomy.status')result={enabled:false};
         else if(method==='voice.preferences')result={mode:'text'};
         else if(method==='tool'){
-          assert.equal(args.name,'phone_capabilities','Only the synthetic read-only capability fixture is granted.');toolCalls++;result={available:true,operation_prefix:'12345-0123456789abcdef',synthetic_receipt:nonce};
+          assert.equal(args.name,'phone_capabilities','Only the synthetic read-only capability fixture is granted.');assert.notEqual(args.owner,'main','The worker must execute the fixture tool.');toolCalls++;result={available:true,operation_prefix:'12345-0123456789abcdef',synthetic_receipt:nonce};
         }
         return JSON.stringify({ok:true,result});
       },emit(json){events.push(JSON.parse(json));},
@@ -83,7 +83,7 @@ try {
         };
         const timer=setInterval(check,250);signal.addEventListener('abort',()=>{clearInterval(timer);reject(Error('Subagent acceptance timed out.'));},{once:true});check();
       });
-      assert.equal(toolCalls,1);assert.ok(events.some(event=>event.type==='worker'));report.pocketAgentWorkerCompleted=true;
+      assert.equal(toolCalls,1);assert.equal(runtime.state().tasks.length,1);assert.ok(events.some(event=>event.type==='state'&&event.state.tasks?.some((task:any)=>task.status==='completed')));report.pocketAgentWorkerCompleted=true;report.workerResultDeliveredToMain=true;
     } finally{runtime.dispatch(JSON.stringify({action:'stop_all'}));runtime.dispatch(JSON.stringify({action:'prepare_shutdown'}));}
   } else throw Error('Unknown acceptance stage.');
   report.passed=true;
