@@ -66,7 +66,7 @@ public final class MainActivity extends androidx.activity.ComponentActivity impl
     private String[] modelIds = {};
     private final java.util.Map<String, String[]> modelReasoningEfforts = new java.util.HashMap<>();
     private final java.util.Map<String, String> modelDefaultReasoningEfforts = new java.util.HashMap<>();
-    private static final String[] REASONING_EFFORTS = {"minimal", "low", "medium", "high", "xhigh", "max", "standard", "extended"};
+    private static final String[] REASONING_EFFORTS = {"minimal", "low", "medium", "high", "xhigh", "max"};
     private StateStore store;
     private static final int IMPORT_CODEX = 90;
     private static final int DICTATE_MESSAGE = 65000;
@@ -533,6 +533,7 @@ public final class MainActivity extends androidx.activity.ComponentActivity impl
     }
     private boolean activeWork() { return RuntimeOwner.peekHost()!=null && (state.optBoolean("busy") || state.optBoolean("active")); }
     private static boolean isReasoningEffort(String value) {
+        if (value.equals("standard") || value.equals("extended")) return true;
         for (String candidate : REASONING_EFFORTS) if (candidate.equals(value)) return true;
         return false;
     }
@@ -596,7 +597,12 @@ public final class MainActivity extends androidx.activity.ComponentActivity impl
     }
     static String[] reasoningChoices(boolean manualModel, String[] advertised,
             String modelId, String verifiedModel, String[] verifiedLevels) {
-        if (manualModel) return REASONING_EFFORTS.clone();
+        return reasoningChoices(manualModel, advertised, modelId, verifiedModel, verifiedLevels, "");
+    }
+    static String[] reasoningChoices(boolean manualModel, String[] advertised,
+            String modelId, String verifiedModel, String[] verifiedLevels, String mode) {
+        if (manualModel) return mode.equals(CredentialStore.CHATGPT_DESKTOP)
+                ? new String[]{"standard", "extended"} : REASONING_EFFORTS.clone();
         if (advertised != null) return advertised.length > 0 ? advertised
                 : new String[]{CredentialStore.DEFAULT_REASONING_EFFORT};
         if (hasPersistedReasoningModelProof(modelId, verifiedModel, verifiedLevels)) return verifiedLevels;
@@ -624,9 +630,9 @@ public final class MainActivity extends androidx.activity.ComponentActivity impl
                 && (key.isEmpty() || key.equals(saved.optString("apiKey")));
     }
     private void populateReasoningPicker(Spinner picker, String modelId, String preferred,
-            boolean manualModel, String verifiedModel, String[] verifiedLevels) {
+            boolean manualModel, String verifiedModel, String[] verifiedLevels, String mode) {
         String[] values = reasoningChoices(manualModel, modelReasoningEfforts.get(modelId),
-                modelId, verifiedModel, verifiedLevels);
+                modelId, verifiedModel, verifiedLevels, mode);
         String[] labels = new String[values.length];
         int selection = -1;
         for (int i = 0; i < values.length; i++) {
@@ -1219,7 +1225,7 @@ public final class MainActivity extends androidx.activity.ComponentActivity impl
         final String[] sourceBeforeConnectionEdit = {savedModelSource[0]};
         final String[] modelBeforeConnectionEdit = {model.getText().toString().trim()};
         populateReasoningPicker(reasoning, model.getText().toString(), savedActiveReasoning[0],
-                modelSource[0].equals("manual"), savedReasoningModel[0], savedReasoningLevels[0]);
+                modelSource[0].equals("manual"), savedReasoningModel[0], savedReasoningLevels[0], modes[mode.getSelectedItemPosition()]);
         panel.addView(reasoning);
         TextView reasoningHelp = text("");
         panel.addView(reasoningHelp);
@@ -1245,7 +1251,7 @@ public final class MainActivity extends androidx.activity.ComponentActivity impl
                             ? selectedReasoningEffort(reasoning) : preferredReasoning[0];
                     populateReasoningPicker(reasoning, modelIds[position], pickerPreference,
                             false, savedProofApplies[0] ? savedReasoningModel[0] : "",
-                            savedProofApplies[0] ? savedReasoningLevels[0] : new String[0]);
+                            savedProofApplies[0] ? savedReasoningLevels[0] : new String[0], modes[mode.getSelectedItemPosition()]);
                 }
             }
             @Override public void onNothingSelected(AdapterView<?> parent) { }
@@ -1395,7 +1401,7 @@ public final class MainActivity extends androidx.activity.ComponentActivity impl
             String pickerPreference = sameProvider ? savedActiveReasoning[0] : preferredReasoning[0];
             populateReasoningPicker(reasoning, model.getText().toString(), pickerPreference,
                     modelSource[0].equals("manual"), sameConnection ? savedReasoningModel[0] : "",
-                    sameConnection ? savedReasoningLevels[0] : new String[0]);
+                    sameConnection ? savedReasoningLevels[0] : new String[0], modes[mode.getSelectedItemPosition()]);
         };
         final int[] lastProvider = {selected};
         mode.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
@@ -1435,7 +1441,7 @@ public final class MainActivity extends androidx.activity.ComponentActivity impl
                 manualModelEdited[0] = true;
                 picker.setSelection(0);
                 populateReasoningPicker(reasoning, value.toString().trim(), effort,
-                        true, "", new String[0]);
+                        true, "", new String[0], modes[mode.getSelectedItemPosition()]);
             }
         });
         TextWatcher connectionChanges = new TextWatcher() {
@@ -1466,7 +1472,7 @@ public final class MainActivity extends androidx.activity.ComponentActivity impl
                 savedProofApplies[0] = sameConnection;
                 picker.setEnabled(sameConnection);
                 populateReasoningPicker(reasoning, currentModel, effort, modelSource[0].equals("manual"),
-                        sameConnection ? savedReasoningModel[0] : "", sameConnection ? savedReasoningLevels[0] : new String[0]);
+                        sameConnection ? savedReasoningModel[0] : "", sameConnection ? savedReasoningLevels[0] : new String[0], modes[mode.getSelectedItemPosition()]);
             }
         };
         endpoint.addTextChangedListener(connectionChanges);

@@ -253,7 +253,7 @@ export function desktopStream(model:Model<any>,context:Context,owner:string,effo
       submitted=true;
       try { await cdp!.evaluate(`(async()=>{${rendererDiscovery}
         const key=Symbol.for('pocket.chatgpt.requests.v1');window[key] ||= new Map();const states=window[key];
-        const cancelled=window[Symbol.for('pocket.chatgpt.cancelled.v1')];if(cancelled?.has(${JSON.stringify(requestId)}))return false;
+        const cancelKey=Symbol.for('pocket.chatgpt.cancelled.v1');const cancelled=(window[cancelKey] ||= new Map());if(cancelled.has(${JSON.stringify(requestId)}))return false;
         const r=await resolveClient();
         for(const [id,s] of states)if(Date.now()-s.createdAt>900000){s.cancelled=true;s.startup.abort();if(s.conversationId)void r.client.stopCompletion({conversation_id:s.conversationId,exclude_async_types:[]}).catch(()=>{});Promise.resolve(s.handle).then(handle=>{if(handle?.streamRequestId)r.client.cancelStream(handle.streamRequestId);}).catch(()=>{});states.delete(id);}
         if([...states.values()].filter(s=>!s.complete&&!s.cancelled).length>=4||states.size>=64)throw Error('Desktop concurrency limit reached');
