@@ -156,9 +156,25 @@ export function desktopPrompt(context:Context) {
   return {text:instruction+'\n\nPocketAgent context:\n'+payload+nextStep,images,tools};
 }
 
+// Native rich-text responses sometimes Markdown-escape JSON punctuation outside strings.
+function protocolJson(text:string) {
+  let result='',quoted=false;
+  for(let i=0;i<text.length;i++){
+    const char=text[i];
+    if(quoted&&char==='\\'){result+=char+(text[++i]??'');continue;}
+    if(char==='"')quoted=!quoted;
+    if(!quoted&&char==='\\'){
+      let end=i;while(text[end]==='\\')end++;
+      if('{}[],:'.includes(text[end]??' ')&&end<text.length){i=end-1;continue;}
+    }
+    result+=char;
+  }
+  return result;
+}
+
 export function parseDesktopAnswer(text:string,tools:Context['tools']) {
   let parsed:any;
-  try{const raw=text.trim();const fenced=/^```(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n```$/i.exec(raw);parsed=JSON.parse(fenced?fenced[1]:raw);}catch{throw new Error('Desktop returned an invalid tool protocol response. No tool was executed.');}
+  try{const raw=text.trim();const fenced=/^(?:\\*`){3}(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n(?:\\*`){3}$/i.exec(raw);parsed=JSON.parse(protocolJson(fenced?fenced[1]:raw));}catch{throw new Error('Desktop returned an invalid tool protocol response. No tool was executed.');}
   if(!parsed||typeof parsed.text!=='string'||!Array.isArray(parsed.toolCalls)||parsed.toolCalls.length>32||(!parsed.text.trim()&&!parsed.toolCalls.length))
     throw new Error('Desktop response does not match the tool protocol. No tool was executed.');
   for(const call of parsed.toolCalls) {
@@ -170,7 +186,7 @@ export function parseDesktopAnswer(text:string,tools:Context['tools']) {
 }
 
 function visibleText(raw:string):string {
-  raw=raw.replace(/^\s*```(?:json)?[ \t]*\r?\n/i,'');
+  raw=raw.replace(/^\s*(?:\\*`){3}(?:json)?[ \t]*\r?\n/i,'');
   const match=/^\s*\{\s*"text"\s*:\s*"/.exec(raw);
   if(!match)return '';
   let value='';

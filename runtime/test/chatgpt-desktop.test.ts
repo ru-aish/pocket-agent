@@ -181,3 +181,12 @@ test('unverified API-style default efforts are omitted from native requests',{ti
   const result=await(await makeStream({...config,reasoningEffort:'low'},{},'main')(modelFor(config,{}),{messages:[]},{fetch:f.fetcher,signal:t.signal})).result();
   assert.equal(result.stopReason,'stop',result.errorMessage);assert.equal(f.requests[0].thinking_effort,undefined);
 });
+
+
+test('native Markdown escapes are decoded only outside JSON strings',()=>{
+  const captured="\\`\\`\\`json\n{\n  \"text\": \"8b0800be-479e-4c0c-bf3c-f199df791298\",\n  \"toolCalls\": \\[\\]\n}\n\\`\\`\\`";
+  assert.equal(parseDesktopAnswer(captured,[]).text,'8b0800be-479e-4c0c-bf3c-f199df791298');
+  const requested="\\`\\`\\`json\n{\"text\": \"Checking\", \"toolCalls\": \\\\[{\"name\": \"read_fixture\", \"arguments\": {\"path\": \"C:\\\\[keep]\\\\file.json\", \"query\": \"literal \\\\n and [brackets]\"}}\\\\]}\n\\`\\`\\`";
+  const tools=[{name:'read_fixture',description:'Read fixture',parameters:Type.Object({path:Type.String(),query:Type.String()})}];
+  assert.deepEqual(parseDesktopAnswer(requested,tools).toolCalls,[{"name": "read_fixture", "arguments": {"path": "C:\\[keep]\\file.json", "query": "literal \\n and [brackets]"}}]);
+});
