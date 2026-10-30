@@ -27,7 +27,7 @@ test('desktop tool protocol rejects prose, unknown tools, malformed arguments an
   assert.equal(prompt.images.length,1);assert.ok(prompt.text.includes('Private instructions'));assert.ok(prompt.text.includes('[Attached image 1]'));assert.ok(!prompt.text.includes('eA=='));
 });
 
-function fixture(t:any,answer:(request:any,index:number)=>{text:string;toolCalls:any[]}|null,dropAtStart=false) {
+function fixture(t:any,answer:(request:any,index:number)=>{text:string;toolCalls:any[]}|null,dropAtStart=false,nativeError=false) {
   const previous=globalThis.WebSocket;
   const sockets=new Set<FakeSocket>();const requests:any[]=[];let stops=0;
   const native={
@@ -38,6 +38,7 @@ function fixture(t:any,answer:(request:any,index:number)=>{text:string;toolCalls
       requests.push(args.request);const response=answer(args.request,requests.length);
       if(dropAtStart&&requests.length===1)for(const socket of [...sockets])socket.close();
       if(response)queueMicrotask(()=>{
+        if(nativeError){args.onError({});return;}
         const text=args.request.messages[0].content.parts.at(-1).includes('Return your answer directly as text.')?response.text:JSON.stringify(response),conversation_id='fixture-conversation-'+requests.length;
         for(const length of [Math.floor(text.length/2),text.length])args.onUpdate({conversation_id,message:{id:'fixture-answer',author:{role:'assistant'},channel:'final',recipient:'all',content:{content_type:'text',parts:[text.slice(0,length)]},status:'finished_successfully',end_turn:length===text.length}});
         args.onComplete({conversation_id});
@@ -113,4 +114,11 @@ test('main and worker streams retain distinct native request state',{timeout:200
   const [main,worker]=await Promise.all([run('main','ALPHA'),run('worker','BRAVO')]);
   assert.equal(main.stopReason,'stop',main.errorMessage);assert.equal(worker.stopReason,'stop',worker.errorMessage);
   assert.equal(main.content.find(part=>part.type==='text')?.text,'ALPHA');assert.equal(worker.content.find(part=>part.type==='text')?.text,'BRAVO');assert.equal(f.requests.length,2);
+});
+
+
+test('recovery terminates a confirmed native failure instead of retrying it',{timeout:10000},async t=>{
+  const f=fixture(t,()=>({text:'',toolCalls:[]}),true,true);
+  const stream=await makeStream(config,{},'failed-worker')(modelFor(config,{}),{messages:[]},{fetch:f.fetcher,signal:t.signal});
+  const result=await stream.result();assert.equal(result.stopReason,'error');assert.match(result.errorMessage||'',/inference failed/);assert.equal(f.requests.length,1);
 });

@@ -35,6 +35,8 @@ export function desktopEndpoint(value: string|undefined): string {
   return url.origin;
 }
 
+class DesktopInferenceError extends Error {}
+
 type Pending={resolve:(value:any)=>void;reject:(error:Error)=>void;timer:ReturnType<typeof setTimeout>};
 export class DesktopCdp {
   private next=0;
@@ -203,7 +205,7 @@ export function desktopStream(model:Model<any>,context:Context,owner:string,effo
     const update=(event:NativeUpdate)=>{
       if(signal.aborted||(finished&&event.kind==='update'))return;
       if(event.conversationId)conversationId=event.conversationId;
-      if(event.kind==='error')throw new Error('Desktop inference failed. Check account limits and model availability.');
+      if(event.kind==='error')throw new DesktopInferenceError('Desktop inference failed. Check account limits and model availability.');
       if(event.kind==='complete'){finished=true;return;}
       if(event.role!=='assistant'||event.hidden||(event.recipient&&event.recipient!=='all'))return;
       if(event.channel==='analysis') {
@@ -215,7 +217,7 @@ export function desktopStream(model:Model<any>,context:Context,owner:string,effo
       }
       if(event.channel&&event.channel!=='final')return;
       rawText=event.text??rawText;
-      if(rawText.length>2_000_000)throw new Error('Desktop response exceeded its size limit.');
+      if(rawText.length>2_000_000)throw new DesktopInferenceError('Desktop response exceeded its size limit.');
       const next=prompt.tools.length?visibleText(rawText):rawText;
       if(!next.startsWith(visible))return;
       if(textIndex<0&&next){textIndex=output.content.length;output.content.push({type:'text',text:''});stream.push({type:'text_start',contentIndex:textIndex,partial:output});}
@@ -268,14 +270,14 @@ export function desktopStream(model:Model<any>,context:Context,owner:string,effo
             await connect();
             const state=await cdp!.evaluate(`(()=>{const s=window[Symbol.for('pocket.chatgpt.requests.v1')]?.get(${JSON.stringify(requestId)});if(!s)return null;s.binding=${JSON.stringify(binding)};return {updates:[...s.updates.values()],last:s.last};})()`);
             if(!state){
-              if(!conversationId)throw new Error('Desktop lost this request. It was not resent; check the saved conversation before retrying.');
+              if(!conversationId)throw new DesktopInferenceError('Desktop lost this request. It was not resent; check the saved conversation before retrying.');
               const recovered=await cdp!.evaluate(`(async()=>{${rendererDiscovery}const r=await resolveClient();const raw=await r.client.get(${JSON.stringify(conversationId)});const c=raw.conversation||raw.data||raw;const nodes=[];const seen=new Set();let id=c.current_node;while(id){if(seen.has(id)||!c.mapping?.[id])throw Error('Invalid ancestry');seen.add(id);const n=c.mapping[id];if(n.message)nodes.push(n.message);id=n.parent;}const userIndex=nodes.findIndex(n=>n.id===${JSON.stringify(messageId)});if(userIndex<0)return null;const __name=value=>value;const normalize=v=>(${normalizeStreamMessage.toString()})(v,'pocket-desktop');const own=nodes.slice(0,userIndex).reverse().map(normalize);const head=normalize(nodes[0]);return {updates:own,complete:c.async_status===null&&head.role==='assistant'&&head.endTurn===true};})()`);
-              if(!recovered?.complete)throw new Error('Desktop lost this request. It was not resent; check the saved conversation before retrying.');
+              if(!recovered?.complete)throw new DesktopInferenceError('Desktop lost this request. It was not resent; check the saved conversation before retrying.');
               for(const event of recovered.updates)update({...event,kind:'update',conversationId});finished=true;continue;
             }
             for(const event of state.updates)update(event);if(state.last)update(state.last);backoff=1000;
           }catch(error){
-            if(error instanceof Error&&error.message.startsWith('Desktop lost'))throw error;
+            if(error instanceof DesktopInferenceError)throw error;
             disconnected=true;signal.throwIfAborted();await new Promise<void>((resolve,reject)=>{
               const done=()=>{clearTimeout(timer);signal.removeEventListener('abort',cancel);resolve();};
               const cancel=()=>{clearTimeout(timer);signal.removeEventListener('abort',cancel);reject(new Error('Request cancelled.'));};
