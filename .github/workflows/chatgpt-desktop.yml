@@ -5,6 +5,9 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: chatgpt-desktop-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   provider:
     runs-on: ubuntu-24.04
@@ -18,11 +21,15 @@ jobs:
           cache-dependency-path: runtime/package-lock.json
       - run: npm ci
         working-directory: runtime
-      - run: npm test && npm run build && npm run test:ui
-        working-directory: runtime
       - name: Bundle provider for isolated VPS acceptance checks
         run: runtime/node_modules/.bin/esbuild runtime/src/provider.ts runtime/src/model-catalog.ts --bundle --platform=node --format=cjs --out-extension:.js=.cjs --outdir=acceptance --external:node:*
       - uses: actions/upload-artifact@v4
         with:
           name: chatgpt-desktop-provider-runtime
           path: acceptance/
+      - name: Native provider contract tests
+        run: timeout 100 node_modules/.bin/tsx --test test/chatgpt-desktop.test.ts
+        working-directory: runtime
+      - name: Runtime and UI regression tests
+        run: npm test && npm run build && npm run test:ui
+        working-directory: runtime

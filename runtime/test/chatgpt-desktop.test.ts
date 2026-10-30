@@ -9,14 +9,14 @@ import {discoverProviderModels} from '../src/model-catalog.js';
 
 const config={mode:'chatgpt-desktop' as const,endpoint:'http://100.64.0.2:19238',model:'gpt-6-thinking',reasoningEffort:'extended' as const};
 
-test('desktop accepts only tailnet or loopback CDP origins and needs no API key',()=>{
+test('desktop accepts only tailnet or loopback CDP origins and needs no API key',{timeout:20000},()=>{
   for(const endpoint of ['http://100.64.0.1:19238','https://100.127.255.254:19238','http://127.0.0.1:19238'])assert.equal(desktopEndpoint(endpoint),endpoint);
   for(const endpoint of ['http://100.63.0.1:19238','http://100.128.0.1:19238','http://example.com','http://100.64.0.2/path','http://user@100.64.0.2','file:///etc/passwd','http://100.64.0.2?key=secret'])assert.throws(()=>desktopEndpoint(endpoint));
   const model=modelFor(config,{});assert.equal(model.provider,'chatgpt-desktop');assert.deepEqual(model.input,['text','image']);
   assert.throws(()=>modelFor({...config,endpoint:undefined},{}),/Tailscale/);
 });
 
-test('desktop tool protocol rejects prose, unknown tools, malformed arguments and excessive calls',()=>{
+test('desktop tool protocol rejects prose, unknown tools, malformed arguments and excessive calls',{timeout:20000},()=>{
   const tools=[{name:'phone_capabilities',description:'Read capabilities',parameters:Type.Object({})}];
   assert.deepEqual(parseDesktopAnswer('{"text":"Checking","toolCalls":[{"name":"phone_capabilities","arguments":{}}]}',tools).toolCalls[0].arguments,{});
   for(const text of ['Done','```json\n{}\n```','{"text":"done","toolCalls":[{"name":"shell","arguments":{}}]}','{"text":"done","toolCalls":[{"name":"phone_capabilities","arguments":[]}]}',JSON.stringify({text:'',toolCalls:Array(33).fill({name:'phone_capabilities',arguments:{}})})])assert.throws(()=>parseDesktopAnswer(text,tools));
@@ -62,32 +62,32 @@ function fixture(t:any,answer:(request:any,index:number)=>{text:string;toolCalls
   return {requests,fetcher,sockets,stops:()=>stops};
 }
 
-test('desktop discovery uses the native catalog with standard and extended reasoning',async t=>{
+test('desktop discovery uses the native catalog with standard and extended reasoning',{timeout:20000},async t=>{
   const f=fixture(t,()=>({text:'OK',toolCalls:[]}));
   const models=await discoverProviderModels(config,{},f.fetcher);
   assert.equal(models.length,1);assert.equal(models[0].id,'gpt-6-thinking');assert.deepEqual(models[0].supportedReasoningLevels,['standard','extended']);
 });
 
-test('Pi executes a desktop-requested tool once and supplies its actual result to the next inference',async t=>{
+test('Pi executes a desktop-requested tool once and supplies its actual result to the next inference',{timeout:20000},async t=>{
   let executed=0;
   const f=fixture(t,(_request,index)=>index===1?{text:'Checking capabilities.',toolCalls:[{name:'phone_capabilities',arguments:{}}]}:{text:'Verified fixture-ready.',toolCalls:[]});
   const model=modelFor(config,{}),source=makeStream(config,{},'main');const events:any[]=[];
-  const agent=new Agent({streamFn:(m,c,o)=>source(m,c,{...o,fetch:f.fetcher}),initialState:{model,tools:[{name:'phone_capabilities',label:'Capabilities',description:'Read capabilities',parameters:Type.Object({}),execute:async()=>{executed++;return {content:[{type:'text',text:'fixture-ready'}],details:{}};}}]}});
+  const agent=new Agent({streamFn:(m,c,o)=>source(m,c,{...o,fetch:f.fetcher,signal:t.signal}),initialState:{model,tools:[{name:'phone_capabilities',label:'Capabilities',description:'Read capabilities',parameters:Type.Object({}),execute:async()=>{executed++;return {content:[{type:'text',text:'fixture-ready'}],details:{}};}}]}});
   agent.subscribe(e=>events.push(e));await agent.prompt('Read capabilities and report the actual result.');
   assert.equal(executed,1,JSON.stringify(agent.state.messages.at(-1)));assert.equal(f.requests.length,2);
   assert.equal(f.requests[0].thinking_effort,'extended');assert.ok(JSON.stringify(f.requests[1]).includes('fixture-ready'));
   assert.equal(agent.state.messages.at(-1)?.stopReason,'stop');assert.ok(events.some(e=>e.type==='message_update'));
 });
 
-test('invalid desktop output ends in error without executing any tools or resending',async t=>{
+test('invalid desktop output ends in error without executing any tools or resending',{timeout:20000},async t=>{
   const f=fixture(t,()=>({text:'Bad call',toolCalls:[{name:'not_granted',arguments:{}}]}));
-  const source=makeStream(config,{},'worker');const result=await (await source(modelFor(config,{}),{messages:[],tools:[]},{fetch:f.fetcher})).result();
+  const source=makeStream(config,{},'worker');const result=await (await source(modelFor(config,{}),{messages:[],tools:[]},{fetch:f.fetcher,signal:t.signal})).result();
   assert.equal(result.stopReason,'error');assert.equal(f.requests.length,1);assert.equal(result.content.some(p=>p.type==='toolCall'),false);
 });
 
-test('abort stops only its owned desktop request and releases the connection',async t=>{
+test('abort stops only its owned desktop request and releases the connection',{timeout:20000},async t=>{
   const f=fixture(t,()=>null),controller=new AbortController();
-  const source=makeStream(config,{},'worker');const stream=await source(modelFor(config,{}),{messages:[]},{fetch:f.fetcher,signal:controller.signal});
+  const source=makeStream(config,{},'worker');const stream=await source(modelFor(config,{}),{messages:[]},{fetch:f.fetcher,signal:AbortSignal.any([controller.signal,t.signal])});
   for await(const event of stream){if(event.type==='start'){queueMicrotask(()=>controller.abort());break;}}
   const result=await stream.result();assert.equal(result.stopReason,'aborted');
 });

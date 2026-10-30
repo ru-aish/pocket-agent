@@ -138,7 +138,7 @@ export function desktopPrompt(context:Context) {
 export function parseDesktopAnswer(text:string,tools:Context['tools']) {
   let parsed:any;
   try{parsed=JSON.parse(text.trim());}catch{throw new Error('Desktop returned an invalid tool protocol response. No tool was executed.');}
-  if(!parsed||typeof parsed.text!=='string'||!Array.isArray(parsed.toolCalls)||parsed.toolCalls.length>32)
+  if(!parsed||typeof parsed.text!=='string'||!Array.isArray(parsed.toolCalls)||parsed.toolCalls.length>32||(!parsed.text.trim()&&!parsed.toolCalls.length))
     throw new Error('Desktop response does not match the tool protocol. No tool was executed.');
   for(const call of parsed.toolCalls) {
     if(!call||typeof call.name!=='string'||!tools?.some(tool=>tool.name===call.name)
@@ -239,7 +239,7 @@ export function desktopStream(model:Model<any>,context:Context,owner:string,effo
           create_time:Date.now()/1000,end_turn:null,recipient:'all',status:'finished_successfully',weight:1,...(images.length?{metadata:{attachments:images}}:{})}]};
       // Retain native state across a dropped CDP socket. Reconnection rebinds this exact request; never resubmit it.
       submitted=true;
-      await cdp!.evaluate(`(async()=>{${rendererDiscovery}
+      try { await cdp!.evaluate(`(async()=>{${rendererDiscovery}
         const key=Symbol.for('pocket.chatgpt.requests.v1');window[key] ||= new Map();const states=window[key];
         for(const [id,s] of states)if((s.complete||s.cancelled)&&Date.now()-s.createdAt>900000)states.delete(id);
         if([...states.values()].filter(s=>!s.complete&&!s.cancelled).length>=4||states.size>=64)throw Error('Desktop concurrency limit reached');
@@ -248,7 +248,7 @@ export function desktopStream(model:Model<any>,context:Context,owner:string,effo
           const normalized=(${normalizeStreamMessage.toString()})(value,'pocket-desktop');const event={...normalized,kind,conversationId:s.conversationId};if(normalized.messageId)s.updates.set(normalized.messageId,event);s.last=event;if(kind==='complete'||kind==='error')s.complete=true;if(typeof window[s.binding]==='function')window[s.binding](JSON.stringify(event));};
         s.handle=r.client.startCompletionStream({request:${JSON.stringify(request)},startupSignal:s.startup.signal,onUpdate:v=>emit('update',v),onComplete:v=>emit('complete',v),onError:v=>emit('error',v)});
         Promise.resolve(s.handle).catch(()=>emit('error',{}));return true;
-      })()`);
+      })()`); } catch(error) {if(!disconnected)throw error;}
       let backoff=1000;
       while(!finished){
         signal.throwIfAborted();if(eventError)throw eventError;
