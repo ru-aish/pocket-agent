@@ -12,6 +12,17 @@ function dom(){
  window.HTMLElement.prototype.showModal=function(){this.open=true;};window.HTMLElement.prototype.close=function(){this.open=false;};
  return document;
 }
+
+test('desktop connection form submits a private endpoint without asking for an API key',async()=>{
+ const document=dom(),{mountConnection}=await import('../connection.js');
+ const requests=[],state={providers:{'chatgpt-desktop':{configured:false}},auth:{state:'idle'}};
+ window.pocketRequest=async(path,input)=>{requests.push({path,input});return state;};
+ const dispose=mountConnection(document.body,{provider:'chatgpt-desktop',getConfig:()=>({provider:'chatgpt-desktop',model:'gpt-6-instant'}),onModel:()=>{}});
+ await tick();
+ const input=document.querySelector('#desktop-endpoint');assert.ok(input);assert.equal(document.querySelector('#provider-key'),null);
+ input.value='http://100.64.0.2:19238';await document.querySelector('form').onsubmit({preventDefault(){}});await tick();
+ const saved=requests.find(request=>request.path==='/api/provider/key');assert.equal(saved.input.endpoint,'http://100.64.0.2:19238');assert.equal(saved.input.apiKey,undefined);dispose();
+});
 test('archive controls are replaced when restoring the live conversation',async()=>{
  const document=dom(),{reconcileMessages}=await import('../chat-view.js');
  const list=document.querySelector('#messages');list.innerHTML='<p>Read only</p><button>Back</button><article class="message"><h2>Old</h2><p class="message-body">Archived</p></article>';

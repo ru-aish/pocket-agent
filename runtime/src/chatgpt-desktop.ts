@@ -98,6 +98,7 @@ export class DesktopCdp {
     if(result.exceptionDetails)throw new Error('The desktop operation failed. Check its sign-in and availability.');
     return result.result?.value;
   }
+  interruptPending(){for(const waiter of this.pending.values()){clearTimeout(waiter.timer);waiter.reject(new Error('Request cancelled.'));}this.pending.clear();}
   close(){this.socket.close();}
 }
 
@@ -197,6 +198,7 @@ export function desktopStream(model:Model<any>,context:Context,owner:string,effo
       notify=()=>{clearTimeout(timer);resolve();};
     });
     const update=(event:NativeUpdate)=>{
+      if(signal.aborted||(finished&&event.kind==='update'))return;
       if(event.conversationId)conversationId=event.conversationId;
       if(event.kind==='error')throw new Error('Desktop inference failed. Check account limits and model availability.');
       if(event.kind==='complete'){finished=true;return;}
@@ -230,7 +232,7 @@ export function desktopStream(model:Model<any>,context:Context,owner:string,effo
       if(!submitted||!cdp)return;
       await cdp.evaluate(`(async()=>{const states=window[Symbol.for('pocket.chatgpt.requests.v1')];const s=states?.get(${JSON.stringify(requestId)});if(!s)return false;s.cancelled=true;s.startup.abort();const handle=await Promise.resolve(s.handle).catch(()=>null);try{if(s.conversationId){const c=window[Symbol.for('terminal-mcp.chat-runtime.client.v5')];await c?.stopCompletion?.({conversation_id:s.conversationId,exclude_async_types:[]});}}finally{const client=window[Symbol.for('terminal-mcp.chat-runtime.client.v5')];if(handle?.streamRequestId)client?.cancelStream?.(handle.streamRequestId);}return true;})()`,5000).catch(()=>{});
     };
-    const abort=()=>{notify();};signal.addEventListener('abort',abort,{once:true});
+    const abort=()=>{notify();cdp?.interruptPending();};signal.addEventListener('abort',abort,{once:true});
     try{
       signal.throwIfAborted();await connect();
       const prompt=desktopPrompt(context),images=[];
@@ -245,9 +247,10 @@ export function desktopStream(model:Model<any>,context:Context,owner:string,effo
       submitted=true;
       try { await cdp!.evaluate(`(async()=>{${rendererDiscovery}
         const key=Symbol.for('pocket.chatgpt.requests.v1');window[key] ||= new Map();const states=window[key];
-        for(const [id,s] of states)if((s.complete||s.cancelled)&&Date.now()-s.createdAt>900000)states.delete(id);
+        const r=await resolveClient();
+        for(const [id,s] of states)if(Date.now()-s.createdAt>900000){s.cancelled=true;s.startup.abort();if(s.conversationId)void r.client.stopCompletion({conversation_id:s.conversationId,exclude_async_types:[]}).catch(()=>{});Promise.resolve(s.handle).then(handle=>{if(handle?.streamRequestId)r.client.cancelStream(handle.streamRequestId);}).catch(()=>{});states.delete(id);}
         if([...states.values()].filter(s=>!s.complete&&!s.cancelled).length>=4||states.size>=64)throw Error('Desktop concurrency limit reached');
-        const r=await resolveClient();const s={createdAt:Date.now(),id:${JSON.stringify(requestId)},owner:${JSON.stringify(createHash('sha256').update(owner).digest('hex'))},binding:${JSON.stringify(binding)},conversationId:null,updates:new Map(),complete:false,cancelled:false,startup:new AbortController()};states.set(s.id,s);
+        const s={createdAt:Date.now(),id:${JSON.stringify(requestId)},owner:${JSON.stringify(createHash('sha256').update(owner).digest('hex'))},binding:${JSON.stringify(binding)},conversationId:null,updates:new Map(),complete:false,cancelled:false,startup:new AbortController()};states.set(s.id,s);
         const emit=(kind,value)=>{if(s.cancelled)return;const v=value&&typeof value==='object'?value:{};const candidate=v.message||v.data||v;s.conversationId=v.conversation_id||v.conversationId||candidate.conversation_id||candidate.conversationId||s.conversationId;
           let normalized;try{const __name=value=>value;normalized=(${normalizeStreamMessage.toString()})(value,'pocket-desktop');}catch{normalized={};kind='error';}const event={...normalized,kind,conversationId:s.conversationId};if(normalized.messageId)s.updates.set(normalized.messageId,event);s.last=event;if(kind==='complete'||kind==='error')s.complete=true;if(typeof window[s.binding]==='function')window[s.binding](JSON.stringify(event));};
         s.handle=r.client.startCompletionStream({request:${JSON.stringify(request)},startupSignal:s.startup.signal,onUpdate:v=>emit('update',v),onComplete:v=>emit('complete',v),onError:v=>emit('error',v)});
@@ -270,7 +273,11 @@ export function desktopStream(model:Model<any>,context:Context,owner:string,effo
             for(const event of state.updates)update(event);if(state.last)update(state.last);backoff=1000;
           }catch(error){
             if(error instanceof Error&&error.message.startsWith('Desktop lost'))throw error;
-            disconnected=true;await new Promise(resolve=>setTimeout(resolve,backoff));backoff=Math.min(backoff*2,10000);
+            disconnected=true;signal.throwIfAborted();await new Promise<void>((resolve,reject)=>{
+              const done=()=>{clearTimeout(timer);signal.removeEventListener('abort',cancel);resolve();};
+              const cancel=()=>{clearTimeout(timer);signal.removeEventListener('abort',cancel);reject(new Error('Request cancelled.'));};
+              const timer=setTimeout(done,backoff);signal.addEventListener('abort',cancel,{once:true});if(signal.aborted)cancel();
+            });backoff=Math.min(backoff*2,10000);
           }
         }else await wait();
       }
@@ -283,10 +290,10 @@ export function desktopStream(model:Model<any>,context:Context,owner:string,effo
         const contentIndex=output.content.length,toolCall={type:'toolCall' as const,id:randomUUID(),name:call.name,arguments:call.arguments};output.content.push(toolCall);
         stream.push({type:'toolcall_start',contentIndex,partial:output});stream.push({type:'toolcall_delta',contentIndex,delta:JSON.stringify(call.arguments),partial:output});stream.push({type:'toolcall_end',contentIndex,toolCall,partial:output});
       }
-      output.stopReason=answer.toolCalls.length?'toolUse':'stop';stream.push({type:'done',reason:output.stopReason,message:output});stream.end(output);
+      (output as any).desktop={conversationId};output.stopReason=answer.toolCalls.length?'toolUse':'stop';stream.push({type:'done',reason:output.stopReason,message:output});stream.end(output);
     }catch(error){
       await stop();const aborted=!!options.signal?.aborted;output.stopReason=aborted?'aborted':'error';
-      output.content=output.content.filter(part=>part.type!=='toolCall');
+      (output as any).desktop={conversationId};output.content=output.content.filter(part=>part.type!=='toolCall');
       output.errorMessage=aborted?'Request cancelled.':signal.aborted?'Desktop request timed out. No prompt was resent; check Tailscale and desktop sign-in.':error instanceof Error&&/^(Desktop |The desktop |The native |Unsupported desktop )/.test(error.message)?error.message:'Desktop inference or tool protocol failed. No tool was executed and no prompt was resent.';
       stream.push({type:'error',reason:aborted?'aborted':'error',error:output});stream.end(output);
     }finally{

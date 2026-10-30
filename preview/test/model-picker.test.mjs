@@ -11,4 +11,5 @@ test('reasoning slider uses only advertised levels in increasing order',()=>{
  assert.deepEqual(reasoningLevels({supportedReasoningLevels:['high','low','medium']}),['low','medium','high']);
  assert.deepEqual(reasoningLevels({}),[]);
  assert.deepEqual(reasoningLevels({supportedReasoningLevels:[]}),[]);
+ assert.deepEqual(reasoningLevels({supportedReasoningLevels:['extended','standard']}),['standard','extended']);
 });
