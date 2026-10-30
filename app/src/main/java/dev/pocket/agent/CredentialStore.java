@@ -34,6 +34,7 @@ public final class CredentialStore {
     public static final String OPENCODE = "opencode";
     public static final String OPENCODE_ENDPOINT = "https://opencode.ai/inference/openai/v1";
     public static final String OPENCODE_MODEL = "big-pickle";
+    public static final String CHATGPT_DESKTOP = "chatgpt-desktop";
     public static final String NEBIUS = "nebius";
     public static final String NEBIUS_ENDPOINT = "https://api.tokenfactory.nebius.com/v1";
     public static final String NEBIUS_MODEL = "zai-org/GLM-5.3-Flash";
@@ -481,7 +482,7 @@ public final class CredentialStore {
     }
     private static String reasoningEffort(String value) {
         return switch (value) {
-            case "minimal", "low", "medium", "high", "xhigh", "max" -> value;
+            case "minimal", "low", "medium", "high", "xhigh", "max", "standard", "extended" -> value;
             default -> DEFAULT_REASONING_EFFORT;
         };
     }
@@ -514,11 +515,27 @@ public final class CredentialStore {
     }
     public static void validateEndpoint(String endpoint, String authMode) throws Exception {
         if (authMode.equals("scripted") || authMode.equals(CODEX_ACCOUNT)) return;
-        if (!authMode.equals("openai") && !authMode.equals("api-key") && !authMode.equals(OPENCODE) && !authMode.equals(NEBIUS) && !authMode.equals("codex") && !authMode.equals("codexRelay") && !authMode.equals("codex-relay")) throw new IllegalArgumentException("Unknown authentication mode");
+        if (!authMode.equals("openai") && !authMode.equals("api-key") && !authMode.equals(OPENCODE) && !authMode.equals(NEBIUS) && !authMode.equals(CHATGPT_DESKTOP) && !authMode.equals("codex") && !authMode.equals("codexRelay") && !authMode.equals("codex-relay")) throw new IllegalArgumentException("Unknown authentication mode");
         URI uri;
         try { uri = new URI(endpoint); } catch (Exception invalid) { throw new IllegalArgumentException("Enter a valid API base URL"); }
         if (uri.getUserInfo() != null || uri.getFragment() != null || uri.getQuery() != null || uri.getHost() == null)
             throw new IllegalArgumentException("Endpoint must be an API base URL without credentials, query or fragment");
+        if (CHATGPT_DESKTOP.equals(authMode)) {
+            String host = uri.getHost();
+            String[] parts = host.split("\\.");
+            boolean tailnet = parts.length == 4;
+            int[] numbers = new int[4];
+            for (int i = 0; tailnet && i < 4; i++) {
+                try { numbers[i] = Integer.parseInt(parts[i]); tailnet = numbers[i] >= 0 && numbers[i] <= 255; }
+                catch (NumberFormatException invalid) { tailnet = false; }
+            }
+            tailnet = tailnet && numbers[0] == 100 && numbers[1] >= 64 && numbers[1] <= 127;
+            boolean local = host.equals("127.0.0.1") || host.equals("localhost") || host.equals("[::1]");
+            if ((!tailnet && !local) || (!"http".equals(uri.getScheme()) && !"https".equals(uri.getScheme()))
+                    || (uri.getPath() != null && !uri.getPath().isEmpty() && !uri.getPath().equals("/")))
+                throw new IllegalArgumentException("Use a Tailscale IPv4 or loopback desktop URL without a path");
+            return;
+        }
         boolean relay = authMode.equals("codex") || authMode.equals("codexRelay") || authMode.equals("codex-relay");
         if (relay) {
             if (!isEmulator() || !"http".equals(uri.getScheme()) || !"10.0.2.2".equals(uri.getHost()) || uri.getPort() < 1)

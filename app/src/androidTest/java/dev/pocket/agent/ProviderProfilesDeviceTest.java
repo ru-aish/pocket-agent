@@ -16,6 +16,34 @@ import static org.junit.Assert.*;
 /** Provider switching must never discard or expose another provider's secret. */
 @RunWith(AndroidJUnit4.class)
 public class ProviderProfilesDeviceTest {
+    @Test public void desktopEndpointRequiresTailnetAndKeepsTheExistingProviderProfile() throws Exception {
+        Assume.assumeTrue("Protected provider test requires an emulator", CredentialStore.isEmulator());
+        for (String endpoint : new String[]{"http://100.64.0.1:19238", "http://100.127.255.254:19238", "http://127.0.0.1:19238"})
+            CredentialStore.validateEndpoint(endpoint, CredentialStore.CHATGPT_DESKTOP);
+        for (String endpoint : new String[]{"http://100.63.0.1:19238", "http://100.128.0.1:19238", "http://example.com:19238", "http://user@100.64.0.1:19238", "http://100.64.0.1:19238/path"}) {
+            try { CredentialStore.validateEndpoint(endpoint, CredentialStore.CHATGPT_DESKTOP); fail(endpoint); }
+            catch (IllegalArgumentException expected) { }
+        }
+        Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        SharedPreferences prefs = context.getSharedPreferences("provider-secrets", Context.MODE_PRIVATE);
+        String before = prefs.getString("encrypted", null);
+        try {
+            assertTrue(prefs.edit().remove("encrypted").commit());
+            CredentialStore store = new CredentialStore(context);
+            store.save(new JSONObject().put("authMode", CredentialStore.NEBIUS).put("model", CredentialStore.NEBIUS_MODEL).put("apiKey", "fixture-nebius-key"));
+            store.save(new JSONObject().put("authMode", CredentialStore.CHATGPT_DESKTOP).put("endpoint", "http://100.64.0.1:19238")
+                    .put("model", "gpt-6-thinking").put("reasoningEffort", "extended").put("modelSource", "manual"));
+            assertEquals("extended", store.get().getString("reasoningEffort"));
+            assertEquals("http://100.64.0.1:19238", store.get().getString("endpoint"));
+            assertEquals("fixture-nebius-key", store.getProviderProfile(CredentialStore.NEBIUS).getString("apiKey"));
+            assertEquals("", store.get().optString("apiKey"));
+        } finally {
+            SharedPreferences.Editor editor = prefs.edit();
+            if (before == null) editor.remove("encrypted"); else editor.putString("encrypted", before);
+            assertTrue(editor.commit());
+        }
+    }
+
     private static String encode(JSONObject value) {
         return Base64.encodeToString(value.toString().getBytes(StandardCharsets.UTF_8),
                 Base64.URL_SAFE | Base64.NO_WRAP | Base64.NO_PADDING);

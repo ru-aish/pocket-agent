@@ -1,3 +1,4 @@
+import {desktopModels} from './chatgpt-desktop.js';
 import { getPiUserAgent } from '@earendil-works/pi-ai/utils/pi-user-agent';
 import { modelFor, REASONING_EFFORTS, type ProviderConfig, type ProviderCredentials, type ReasoningEffort } from './provider.js';
 import { CODEX_CATALOG_COMPAT_VERSION, ensureCodexCredentials } from './codex-auth.js';
@@ -50,6 +51,7 @@ export async function discoverProviderModels(
 ): Promise<CatalogModel[]> {
   if (config.mode === 'scripted') return [{id: 'scripted', name: 'Scripted model'}];
   const current = modelFor(config, credentials); // Validates scheme/host/credential-free base URL.
+  if(current.provider==='chatgpt-desktop')return desktopModels(current.baseUrl,fetcher);
   const account = current.api === 'openai-codex-responses';
   const maxCatalogBytes = account ? MAX_CODEX_CATALOG_BYTES : MAX_PROVIDER_CATALOG_BYTES;
   const mode = credentials.authMode || config.mode || 'openai';

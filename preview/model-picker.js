@@ -1,6 +1,6 @@
 import {api} from './connection.js';
-const providers=[['codex-account','Codex'],['nebius','Nebius'],['opencode','OpenCode']];
-const effortOrder=['none','minimal','low','medium','high','xhigh','max'];
+const providers=[['codex-account','Codex'],['nebius','Nebius'],['opencode','OpenCode'],['chatgpt-desktop','ChatGPT']];
+const effortOrder=['none','minimal','low','medium','high','xhigh','max','standard','extended'];
 export function compactModelName(name){const model=(name||'Model').split('/').at(-1).replace(/^gpt-/i,'GPT ');return model.length>12?model.slice(0,11)+'…':model;}
 export function reasoningLevels(model){return effortOrder.filter(level=>model?.supportedReasoningLevels?.includes(level));}
 export function mountModelPicker({getConfig,save,isBusy=()=>false,onConnect}) {

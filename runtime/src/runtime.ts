@@ -627,7 +627,7 @@ export class PocketRuntime {
         const requestId=cmd.requestId;
         if(cmd.credentials) {
           const draft=cmd.credentials;
-          if(!['nebius','opencode','openai','api-key','codex','codexRelay','codex-relay'].includes(draft.authMode))throw new Error('Unsupported draft provider');
+          if(!['chatgpt-desktop','nebius','opencode','openai','api-key','codex','codexRelay','codex-relay'].includes(draft.authMode))throw new Error('Unsupported draft provider');
           const config={mode:normalizeMode(draft.authMode),endpoint:draft.endpoint,model:draft.model};
           this.connectionTests++;this.publish();
           const finish=()=>{this.connectionTests--;this.publish();};

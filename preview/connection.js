@@ -37,6 +37,10 @@ export function mountConnection(parent,{provider,getConfig,onModel,voiceOnly=fal
           try{return await api('/api/auth/codex/import',{document});}finally{file.value='';}
         });label.append(file);if(!voiceOnly)root.append(label);
       }
+    }else if(provider==='chatgpt-desktop'){
+      const form=node('form','provider-key-form');const label=node('label','','Desktop endpoint');label.htmlFor='desktop-endpoint';const input=node('input');input.id='desktop-endpoint';input.type='url';input.required=true;input.placeholder='http://100.x.y.z:19238';input.value=state.providers[provider]?.endpoint||'';
+      const save=node('button','settings-primary','Test & connect desktop');save.type='submit';form.append(label,input,save);
+      form.onsubmit=event=>{event.preventDefault();save.disabled=true;void act(async()=>{try{return await api('/api/provider/key',{...getConfig(),provider,endpoint:input.value});}finally{if(save.isConnected)save.disabled=false;}});};root.append(form);
     }else{
       const form=node('form','provider-key-form');const label=node('label','','Provider key');label.htmlFor='provider-key';const input=node('input');input.id='provider-key';input.type='password';input.autocomplete='off';input.required=true;input.maxLength=16384;input.placeholder=provider==='nebius'?'Nebius API key':'OpenCode Console service-account key';
       const save=node('button','settings-primary',configured?'Test & replace provider key':'Test & save provider key');save.type='submit';
@@ -53,11 +57,12 @@ export function mountConnection(parent,{provider,getConfig,onModel,voiceOnly=fal
           select.onchange=()=>{const chosen=result.models.find(m=>m.id===select.value);if(chosen)onModel(chosen);};root.querySelector('.catalog-picker')?.remove();const field=node('div','catalog-picker');field.append(label,select);root.append(field);error.textContent=result.models.length?'':'No models were returned by this provider.';
         }catch(failure){if(!disposed)error.textContent=failure.message;}
       }));
-      root.append(button(provider==='codex-account'?'Sign out of Codex':'Remove saved key',()=>act(()=>api('/api/provider/disconnect',{provider}))));
+      root.append(button(provider==='codex-account'?'Sign out of Codex':provider==='chatgpt-desktop'?'Disconnect desktop':'Remove saved key',()=>act(()=>api('/api/provider/disconnect',{provider}))));
     }
     if(configured&&voiceOnly)root.append(button('Disconnect voice account',()=>act(()=>api('/native/voice/disconnect-account',{}))));
     root.append(error);
-    root.append(node('p','connection-help',window.PocketNative?(provider==='codex-account'?'Account tokens stay protected by Android Keystore and are refreshed by the Android runtime.':'Your key is protected by Android Keystore and tested with the selected model before saving. It is sent only to the provider’s fixed endpoint.'):(provider==='codex-account'?'Account tokens stay encrypted on this local server and are refreshed using the repo’s Codex adapter. They are not stored in the browser.':'Your key is encrypted on this local server and tested with the selected model before saving. It is sent only to the provider’s fixed inference endpoint.')));
+    if(provider==='chatgpt-desktop')root.append(node('p','connection-help','Connect this device to Tailscale. The signed-in ChatGPT desktop runs on your VPS; PocketAgent owns phone tools, workers, and saved chat history. Keep its debug port private to your tailnet.'));
+    else root.append(node('p','connection-help',window.PocketNative?(provider==='codex-account'?'Account tokens stay protected by Android Keystore and are refreshed by the Android runtime.':'Your key is protected by Android Keystore and tested with the selected model before saving. It is sent only to the provider’s fixed endpoint.'):(provider==='codex-account'?'Account tokens stay encrypted on this local server and are refreshed using the repo’s Codex adapter. They are not stored in the browser.':'Your key is encrypted on this local server and tested with the selected model before saving. It is sent only to the provider’s fixed inference endpoint.')));
   }
   root.append(node('p','connection-help','Checking saved connection…'),error);
   void act(()=>api('/api/provider/status'));
