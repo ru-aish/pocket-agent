@@ -5,9 +5,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import java.net.HttpURLConnection;
 import java.net.URI;
-import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
@@ -57,12 +55,24 @@ public class ChatGptMcpDeviceTest {
     }
     private static final class Reply {int status;String body,challenge,location;JSONObject json() throws Exception{return new JSONObject(body);}}
     private Reply request(String method,String path,String type,String body,String bearer,String origin) throws Exception {
-        HttpURLConnection connection=(HttpURLConnection)new URL("http://127.0.0.1:8768"+path).openConnection();connection.setConnectTimeout(5000);connection.setReadTimeout(5000);connection.setInstanceFollowRedirects(false);connection.setRequestMethod(method);
-        if(bearer!=null)connection.setRequestProperty("Authorization","Bearer "+bearer);if(origin!=null)connection.setRequestProperty("Origin",origin);
-        if(body!=null){connection.setRequestProperty("Content-Type",type);connection.setDoOutput(true);try(var out=connection.getOutputStream()){out.write(body.getBytes(StandardCharsets.UTF_8));}}
-        Reply reply=new Reply();reply.status=connection.getResponseCode();reply.challenge=connection.getHeaderField("WWW-Authenticate");reply.location=connection.getHeaderField("Location");
-        try(var in=reply.status>=400?connection.getErrorStream():connection.getInputStream()){reply.body=in==null?"":new String(in.readAllBytes(),StandardCharsets.UTF_8);}finally{connection.disconnect();}return reply;
+        byte[] payload=body==null?new byte[0]:body.getBytes(StandardCharsets.UTF_8);
+        try(java.net.Socket socket=new java.net.Socket("127.0.0.1",8768)){
+            socket.setSoTimeout(5000);
+            String headers=method+" "+path+" HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n";
+            if(bearer!=null)headers+="Authorization: Bearer "+bearer+"\r\n";
+            if(origin!=null)headers+="Origin: "+origin+"\r\n";
+            if(body!=null)headers+="Content-Type: "+type+"\r\nContent-Length: "+payload.length+"\r\n";
+            socket.getOutputStream().write((headers+"\r\n"+(body==null?"":body)).getBytes(StandardCharsets.UTF_8));socket.getOutputStream().flush();
+            java.io.ByteArrayOutputStream response=new java.io.ByteArrayOutputStream();byte[] buffer=new byte[8192];int count;
+            try{while((count=socket.getInputStream().read(buffer))!=-1)response.write(buffer,0,count);}
+            catch(java.net.SocketException reset){if(response.size()==0)throw reset;}
+            String raw=new String(response.toByteArray(),StandardCharsets.UTF_8),parts[]=raw.split("\r\n\r\n",2);assertEquals("Complete HTTP response",2,parts.length);
+            Reply reply=new Reply();reply.status=Integer.parseInt(parts[0].split(" ",3)[1]);reply.body=parts[1];
+            for(String line:parts[0].split("\r\n")){int colon=line.indexOf(':');if(colon<0)continue;String key=line.substring(0,colon),value=line.substring(colon+1).trim();if(key.equalsIgnoreCase("Location"))reply.location=value;if(key.equalsIgnoreCase("WWW-Authenticate"))reply.challenge=value;}
+            return reply;
+        }
     }
+
     private static String form(Map<String,String> values){return values.entrySet().stream().map(e->ConnectorAuth.encode(e.getKey())+"="+ConnectorAuth.encode(e.getValue())).collect(java.util.stream.Collectors.joining("&"));}
     @Test public void realHttpDiscoveryOAuthAndAuthenticatedMcp() throws Exception {
         Fixture f=new Fixture();ChatGptMcpServer server=new ChatGptMcpServer(f.auth);server.start(5000,false);

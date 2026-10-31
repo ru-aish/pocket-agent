@@ -127,8 +127,10 @@ jobs:
             # the privileged Shizuku shell UserService. Enable non-SDK access only on this
             # disposable emulator so instrumentation can reach that platform API too.
             adb shell settings put global hidden_api_policy 1
-            timeout 300 ./gradlew --no-daemon -PvoiceEmulatorTest :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=dev.pocket.agent.ChatGptMcpDeviceTest
+            mcp_status=0
+            timeout 300 ./gradlew --no-daemon -PvoiceEmulatorTest :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=dev.pocket.agent.ChatGptMcpDeviceTest || mcp_status=$?
             cp -R app/build/outputs/androidTest-results/connected emulator-diagnostics/chatgpt-mcp-results
+            if [ "$mcp_status" -ne 0 ]; then exit "$mcp_status"; fi
             timeout 300 ./gradlew --no-daemon -PvoiceEmulatorTest :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=dev.pocket.agent.PhoneTargetDeviceTest
             timeout 300 ./gradlew --no-daemon -PvoiceEmulatorTest :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=dev.pocket.agent.CrashResilienceDeviceTest
             adb shell settings delete global hidden_api_policy
