@@ -53,7 +53,8 @@ final class ChatGptMcpServer extends NanoHTTPD {
         Map<String,String> values=form(body(request));
         if(path.equals("/oauth/authorize")){
             String destination=auth.approve(values.getOrDefault("pending",""),values.getOrDefault("pairing_code",""));
-            Response result=response(Response.Status.REDIRECT,"text/plain","Connection authorized. Returning to ChatGPT.");result.addHeader("Location",destination);return result;
+            // NanoHTTPD REDIRECT is a permanent 301; the OAuth callback needs 302.
+            Response result=response(Response.Status.FOUND,"text/plain","Connection authorized. Returning to ChatGPT.");result.addHeader("Location",destination);return result;
         }
         if(path.equals("/oauth/token")){
             try{return json(Response.Status.OK,auth.token(values));}
