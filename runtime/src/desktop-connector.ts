@@ -58,16 +58,17 @@ export class DesktopToolRouter implements DesktopConnector {
     if(Object.keys(this.receipts).length>=800||JSON.stringify(this.receipts).length>4_000_000)throw Error('ChatGPT MCP receipt budget reached; finish the current sessions before starting more work');
     this.receipts[key]={fingerprint,state:'started'};
     if(!this.host.persist()){delete this.receipts[key];throw Error('Cannot persist tool reservation. Nothing was executed.');}
-    this.host.record(binding.owner,name,requestId,validated);
+    const callId=sessionId+':'+requestId;
+    this.host.record(binding.owner,name,callId,validated);
     const pending=Promise.resolve().then(async()=>{
       binding.signal.throwIfAborted();
       let result:any;
-      try {result=await tool.execute(requestId,validated,binding.signal);}
+      try {result=await tool.execute(callId,validated,binding.signal);}
       catch(error){result={isError:true,content:[{type:'text',text:String((error as Error)?.message??'Tool failed')} ]};}
       // Large screenshots stay in the live response, never in the durable duplicate receipt.
       const retained={...result,content:result.content?.filter((block:any)=>block.type!=='image')};
       if(JSON.stringify(retained).length>64000)throw Error('Tool result is too large to retain; inspect device state before retrying');
-      this.host.record(binding.owner,name,requestId,validated,result);
+      this.host.record(binding.owner,name,callId,validated,result);
       this.receipts[key]={fingerprint,state:'finished',result:retained};
       if(!this.host.persist())throw Error('Tool finished but its receipt could not be saved. Inspect state before retrying.');
       return result;

@@ -52,7 +52,7 @@ function fixture(t:any,answer:(request:any,index:number)=>any,dropAtStart=false,
     },
   };
   const window:any={};window[Symbol.for('terminal-mcp.chat-runtime.client.v5')]=native;
-  const context=vm.createContext({window,document:{querySelectorAll:()=>[]},AbortController,Map,Set,WeakSet,Symbol,Promise,Intl,Date,setTimeout,clearTimeout,URL,console});
+  const context=vm.createContext({window,document:{querySelectorAll:()=>[]},AbortController,Map,Set,WeakSet,Symbol,Promise,Intl,Date,setTimeout,clearTimeout,URL,console,crypto:globalThis.crypto});
   class FakeSocket extends EventTarget {
     static OPEN=1;readyState=0;
     constructor(readonly url:any){super();connections++;sockets.add(this);queueMicrotask(()=>{this.readyState=1;this.dispatchEvent(new Event('open'));});}
@@ -235,7 +235,7 @@ test('native one-use approval continues the same conversation without resending 
       pending={id:'approval-head',author:{role:'tool'},metadata:{jit_plugin_data:{from_server:{type:'confirm_action',body:{connector_name:'PocketAgent',connector_id:'asdk_app_test',link_id:'link_test',codex_mcp_elicitation:{kind:'mcpToolCall',status:'pending'},params:{path:'/asdk_app_test/link_test/read_fixture',args:{pocket_session:session,pocket_request:'read-one'}},actions:[{allow:{target_message_id:'approval-head'}}]}}}}};return {approval:pending};
     }
     assert.equal(request.parent_message_id,'approval-head');assert.equal(request.conversation_id,'fixture-conversation-1');assert.equal(request.messages[0].author.role,'tool');
-    assert.deepEqual(request.messages[0].metadata.jit_plugin_data.from_client,{target_message_id:'approval-head',type:'allow',remember_answer:false});
+    assert.deepEqual(JSON.parse(JSON.stringify(request.messages[0].metadata.jit_plugin_data.from_client)),{target_message_id:'approval-head',type:'allow',remember_answer:false});
     const result=await router.call('authorized','read_fixture',pending.metadata.jit_plugin_data.from_server.body.params.args);return {text:result.content[0].text};
   },false,false,false,{get:()=>({current_node:'head',mapping:{head:{message:pending,parent:'user'},user:{message:f.requests[0].messages[0],parent:null}}})});
   const source=makeStream(config,{},'main',undefined,undefined,undefined,router);

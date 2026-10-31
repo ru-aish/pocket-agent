@@ -14,7 +14,7 @@ final class ChatGptMcpServer extends NanoHTTPD {
     private final ThreadPoolExecutor workers=new ThreadPoolExecutor(16,16,0,TimeUnit.SECONDS,new ArrayBlockingQueue<>(12));
     private volatile boolean closed;
     ChatGptMcpServer(ConnectorAuth auth){super("127.0.0.1",8768);this.auth=auth;}
-    static JSONObject object(Object... values){JSONObject result=new JSONObject();try{for(int i=0;i<values.length;i+=2)result.put((String)values[i],values[i+1]);}catch(Exception error){throw new IllegalStateException(error);}return result;}
+    static JSONObject object(Object... values){JSONObject result=new JSONObject();try{for(int i=0;i<values.length;i+=2)result.put((String)values[i],values[i+1]==null?JSONObject.NULL:values[i+1]);}catch(Exception error){throw new IllegalStateException(error);}return result;}
     private Response response(Response.IStatus status,String mime,String body){
         Response result=newFixedLengthResponse(status,mime,body);
         result.addHeader("Cache-Control","no-store");result.addHeader("X-Content-Type-Options","nosniff");result.addHeader("Referrer-Policy","no-referrer");

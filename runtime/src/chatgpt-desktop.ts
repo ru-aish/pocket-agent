@@ -283,7 +283,7 @@ export function desktopStream(model:Model<any>,context:Context,owner:string,effo
                   if(!owns||s.attempted.has(pending.messageId))throw Error('Unverified or uncertain connector approval');
                   if(s.cancelled)return;s.attempted.add(pending.messageId);
                   const response={...initialRequest,conversation_id:s.conversationId,parent_message_id:pending.messageId,
-                    messages:[{id:${JSON.stringify(requestId)}+'-approval-'+s.attempted.size,author:{role:'tool',name:'api_tool.call_tool',metadata:{}},channel:null,content:{content_type:'text',parts:['']},create_time:Date.now()/1000,end_turn:null,
+                    messages:[{id:crypto.randomUUID(),author:{role:'tool',name:'api_tool.call_tool',metadata:{}},channel:null,content:{content_type:'text',parts:['']},create_time:Date.now()/1000,end_turn:null,
                       metadata:{jit_plugin_data:{from_client:{target_message_id:pending.messageId,type:'allow',remember_answer:false}}},recipient:'all',status:'finished_successfully',weight:1}]};
                   start(response);return;
                 }
