@@ -533,6 +533,7 @@ public final class MainActivity extends androidx.activity.ComponentActivity impl
     }
     private boolean activeWork() { return RuntimeOwner.peekHost()!=null && (state.optBoolean("busy") || state.optBoolean("active")); }
     private static boolean isReasoningEffort(String value) {
+        if (value.equals("standard") || value.equals("extended")) return true;
         for (String candidate : REASONING_EFFORTS) if (candidate.equals(value)) return true;
         return false;
     }
@@ -543,6 +544,8 @@ public final class MainActivity extends androidx.activity.ComponentActivity impl
             case "high" -> "High";
             case "xhigh" -> "Extra high (xhigh)";
             case "max" -> "Maximum (max)";
+            case "standard" -> "Standard";
+            case "extended" -> "Extended";
             default -> "Low";
         };
     }
@@ -587,14 +590,19 @@ public final class MainActivity extends androidx.activity.ComponentActivity impl
             String selectedEffort, String preferred, String[] advertised,
             String verifiedModel, String[] verifiedLevels, boolean explicitManualChoice) {
         if (mode.equals("openai") || mode.equals("codex")) return selectedEffort;
-        if (mode.equals(CredentialStore.CODEX_ACCOUNT)
+        if ((mode.equals(CredentialStore.CODEX_ACCOUNT) || mode.equals(CredentialStore.CHATGPT_DESKTOP))
                 && (explicitManualChoice || containsReasoningEffort(advertised, selectedEffort)
                 || hasPersistedReasoningProof(selectedModel, selectedEffort, verifiedModel, verifiedLevels))) return selectedEffort;
         return preferred;
     }
     static String[] reasoningChoices(boolean manualModel, String[] advertised,
             String modelId, String verifiedModel, String[] verifiedLevels) {
-        if (manualModel) return REASONING_EFFORTS.clone();
+        return reasoningChoices(manualModel, advertised, modelId, verifiedModel, verifiedLevels, "");
+    }
+    static String[] reasoningChoices(boolean manualModel, String[] advertised,
+            String modelId, String verifiedModel, String[] verifiedLevels, String mode) {
+        if (manualModel) return mode.equals(CredentialStore.CHATGPT_DESKTOP)
+                ? new String[]{"standard", "extended"} : REASONING_EFFORTS.clone();
         if (advertised != null) return advertised.length > 0 ? advertised
                 : new String[]{CredentialStore.DEFAULT_REASONING_EFFORT};
         if (hasPersistedReasoningModelProof(modelId, verifiedModel, verifiedLevels)) return verifiedLevels;
@@ -622,9 +630,9 @@ public final class MainActivity extends androidx.activity.ComponentActivity impl
                 && (key.isEmpty() || key.equals(saved.optString("apiKey")));
     }
     private void populateReasoningPicker(Spinner picker, String modelId, String preferred,
-            boolean manualModel, String verifiedModel, String[] verifiedLevels) {
+            boolean manualModel, String verifiedModel, String[] verifiedLevels, String mode) {
         String[] values = reasoningChoices(manualModel, modelReasoningEfforts.get(modelId),
-                modelId, verifiedModel, verifiedLevels);
+                modelId, verifiedModel, verifiedLevels, mode);
         String[] labels = new String[values.length];
         int selection = -1;
         for (int i = 0; i < values.length; i++) {
@@ -811,7 +819,7 @@ public final class MainActivity extends androidx.activity.ComponentActivity impl
     }
     private void updateProviderLabel() {
         if (providerLabel == null) return;
-        try { String mode = new CredentialStore(this).get().optString("authMode"); providerLabel.setText(switch (mode) { case "nebius" -> "Nebius"; case "opencode" -> "OpenCode"; case "codex-account" -> "Codex"; default -> "Pocket Agent"; }); }
+        try { String mode = new CredentialStore(this).get().optString("authMode"); providerLabel.setText(switch (mode) { case "nebius" -> "Nebius"; case "opencode" -> "OpenCode"; case "chatgpt-desktop" -> "ChatGPT"; case "codex-account" -> "Codex"; default -> "Pocket Agent"; }); }
         catch (Exception unavailable) { providerLabel.setText("Connect provider"); }
     }
     private void renderNativeMessages(JSONArray items) {
@@ -845,13 +853,13 @@ public final class MainActivity extends androidx.activity.ComponentActivity impl
     private JSONObject webStatus() throws Exception {
         CredentialStore credentials=new CredentialStore(this);JSONObject config=credentials.get();String mode=config.optString("authMode");
         JSONObject providers = new JSONObject();
-        for(String provider:new String[]{"nebius","opencode","codex-account"}){JSONObject profile=credentials.getProviderProfile(provider);providers.put(provider,json("configured",!profile.optString(provider.equals("codex-account")?"accessToken":"apiKey").isEmpty(),"active",mode.equals(provider),"model",profile.optString("model"),"reasoning",profile.optString("reasoningEffort","low")));}
+        for(String provider:new String[]{"nebius","opencode","codex-account","chatgpt-desktop"}){JSONObject profile=credentials.getProviderProfile(provider);providers.put(provider,json("configured",!profile.optString(provider.equals("codex-account")?"accessToken":provider.equals("chatgpt-desktop")?"endpoint":"apiKey").isEmpty(),"active",mode.equals(provider),"model",profile.optString("model"),"reasoning",profile.optString("reasoningEffort","low"),"endpoint",provider.equals("chatgpt-desktop")?profile.optString("endpoint"):""));}
         return json("providers",providers,"auth",webAuth,"voiceAccount",!new CredentialStore(this).getVoiceCodex().optString("accessToken").isEmpty(),"voice",json("groq",new VoiceCredentialStore(this,"groq").configured(),"deepgram",new VoiceCredentialStore(this).configured()));
     }
     private JSONObject webSnapshot() throws Exception { return webSnapshot(state); }
     private JSONObject webSnapshot(JSONObject currentState) throws Exception {
         JSONObject config = new CredentialStore(this).get(); String mode=config.optString("authMode");
-        JSONObject prefs=json("name",getSharedPreferences("pocket-ui",0).getString("name",""),"provider",java.util.List.of("nebius","opencode","codex-account").contains(mode)?mode:"none","model",config.optString("model"),"reasoning",config.optString("reasoningEffort","low"),"preferredReasoning",config.optString("preferredReasoningEffort",config.optString("reasoningEffort","low")),"instructions",currentState.optString("personalInstructions"),"stt",getSharedPreferences("pocket-ui",0).getString("voiceEngine","system"),"wake",WakeWordService.enabled(this),"autonomy",AutonomyStore.enabled(this));
+        JSONObject prefs=json("name",getSharedPreferences("pocket-ui",0).getString("name",""),"provider",java.util.List.of("nebius","opencode","codex-account","chatgpt-desktop").contains(mode)?mode:"none","model",config.optString("model"),"reasoning",config.optString("reasoningEffort","low"),"preferredReasoning",config.optString("preferredReasoningEffort",config.optString("reasoningEffort","low")),"instructions",currentState.optString("personalInstructions"),"stt",getSharedPreferences("pocket-ui",0).getString("voiceEngine","system"),"wake",WakeWordService.enabled(this),"autonomy",AutonomyStore.enabled(this));
         JSONArray servers=new JSONArray(),stored=credentialsForUi();
         for(int i=0;i<stored.length();i++){JSONObject server=stored.getJSONObject(i);servers.put(json("id",server.optString("id"),"name",server.optString("name"),"url",server.optString("url"),"authMode",server.optString("authMode"),"enabled",server.optBoolean("enabled")));}
         JSONObject result=json("state",currentState,"preferences",prefs,"connection",webStatus(),"servers",servers,"voiceActive",SubscriptionVoiceService.isActive());
@@ -878,6 +886,11 @@ public final class MainActivity extends androidx.activity.ComponentActivity impl
             });});
     }
     private void webRequest(String path,JSONObject body,PocketWebUi.Reply reply) throws Exception {
+        if(path.startsWith("/native/chatgpt-mcp/")){
+            String action=path.substring("/native/chatgpt-mcp/".length());
+            if(action.equals("copy")){reply.complete(ChatGptMcpSettings.handle(this,action,body),null);return;}
+            uiReads.submit(()->{try{reply.complete(ChatGptMcpSettings.handle(this,action,body),null);}catch(Exception error){reply.complete(null,error instanceof IllegalArgumentException||error instanceof IllegalStateException?error.getMessage():"Could not update ChatGPT MCP. Check the phone connection and try again.");}});return;
+        }
         CredentialStore credentials=new CredentialStore(this);
         switch(path) {
             case "/native/snapshot" -> {
@@ -936,8 +949,8 @@ public final class MainActivity extends androidx.activity.ComponentActivity impl
             }
             case "/native/select-provider" -> {
                 if(activeWork())throw new IllegalStateException("Stop active work before changing connections");String provider=body.optString("provider");
-                if(!java.util.List.of("nebius","opencode","codex-account").contains(provider))throw new IllegalArgumentException("Choose a provider");
-                JSONObject profile=credentials.getProviderProfile(provider);boolean configured=!profile.optString(provider.equals("codex-account")?"accessToken":"apiKey").isEmpty();
+                if(!java.util.List.of("nebius","opencode","codex-account","chatgpt-desktop").contains(provider))throw new IllegalArgumentException("Choose a provider");
+                JSONObject profile=credentials.getProviderProfile(provider);boolean configured=!profile.optString(provider.equals("codex-account")?"accessToken":provider.equals("chatgpt-desktop")?"endpoint":"apiKey").isEmpty();
                 invalidateAccountOperations();webAuth=json("state","idle");webModelProofs.clear();
                 if(configured){credentials.save(profile);if(AgentService.isRunning())command(json("action","configure"));}
                 reply.complete(json("configured",configured,"provider",provider,"model",profile.optString("model"),"reasoning",profile.optString("reasoningEffort","low")),null);return;
@@ -945,7 +958,7 @@ public final class MainActivity extends androidx.activity.ComponentActivity impl
             case "/native/provider" -> {
                 if(activeWork())throw new IllegalStateException("Stop active work before changing connections");
                 JSONObject config=credentials.get();String provider=body.optString("provider");
-                if(!java.util.List.of("nebius","opencode","codex-account").contains(provider))throw new IllegalArgumentException("Choose a provider");
+                if(!java.util.List.of("nebius","opencode","codex-account","chatgpt-desktop").contains(provider))throw new IllegalArgumentException("Choose a provider");
                 if(!provider.equals(config.optString("authMode")))throw new IllegalStateException("Connect this provider first");
                 config.put("preferredReasoningEffort",body.optString("preferredReasoning",config.optString("preferredReasoningEffort",config.optString("reasoningEffort","low"))));
                 config.put("model",body.optString("model"));config.put("reasoningEffort",body.optString("reasoning","low"));config.put("modelSource",body.has("supportedReasoningLevels")?"catalog":"manual");
@@ -954,8 +967,9 @@ public final class MainActivity extends androidx.activity.ComponentActivity impl
                 credentials.save(config);if(AgentService.isRunning())command(json("action","configure"));
             }
             case "/api/provider/key" -> {
-                if(activeWork())throw new IllegalStateException("Stop active work before changing connections");String provider=body.optString("provider");if(!provider.equals("nebius")&&!provider.equals("opencode"))throw new IllegalArgumentException("Choose a key provider");
-                JSONObject draft=json("authMode",provider,"apiKey",body.optString("apiKey"),"model",body.optString("model",provider.equals("nebius")?"zai-org/GLM-5.3-Flash":"big-pickle"));
+                if(activeWork())throw new IllegalStateException("Stop active work before changing connections");String provider=body.optString("provider");if(!provider.equals("nebius")&&!provider.equals("opencode")&&!provider.equals("chatgpt-desktop"))throw new IllegalArgumentException("Choose a key provider");
+                JSONObject draft=json("authMode",provider,"apiKey",body.optString("apiKey"),"model",body.optString("model",provider.equals("nebius")?"zai-org/GLM-5.3-Flash":provider.equals("chatgpt-desktop")?"gpt-6-instant":"big-pickle"));
+                if(provider.equals("chatgpt-desktop"))draft.put("endpoint",body.optString("endpoint"));
                 validateWebConnection(draft,reply);return;
             }
             case "/api/provider/disconnect" -> {
@@ -1079,7 +1093,7 @@ public final class MainActivity extends androidx.activity.ComponentActivity impl
             activitySection(body, "Your assistant"); settingsRow(body, "AI & model", "Provider connection, sign-in, models & reasoning", this::settings);
             settingsRow(body, "Personal instructions", "Tone, priorities and preferences", () -> phonePage("Personal instructions", page -> { EditText value = field(page, "Instructions for Pocket", state.optString("personalInstructions")); value.setSingleLine(false); value.setMinLines(6); value.setGravity(Gravity.TOP); page.addView(button("Save instructions", () -> { String prompt = value.getText().toString().trim(); if (prompt.length() > 50000) { toast("Instructions must be 50000 characters or fewer"); return; } savePersonalInstructions(prompt,(result,error)->toast(error==null?"Instructions saved":error)); })); }));
             settingsRow(body, "Voice & wake word", "System speech, Groq Whisper, Deepgram & Codex voice", this::voiceSettingsPage);
-            activitySection(body, "On your phone"); settingsRow(body, "Phone access", "Permissions, Accessibility & virtual displays", this::phoneAccessPage); settingsRow(body, "Connections", "Remote MCP servers & tool discovery", this::mcpSettings); settingsRow(body, "Background work", "Schedules, approvals and run history", this::autonomyActivity);
+            activitySection(body, "On your phone"); settingsRow(body, "Phone access", "Permissions, Accessibility & virtual displays", this::phoneAccessPage); settingsRow(body, "Connections", "Remote MCP servers & tool discovery", this::mcpSettings); settingsRow(body,"ChatGPT MCP","Connector URL & pairing code",()->startActivity(new Intent(this,ChatGptMcpActivity.class))); settingsRow(body, "Background work", "Schedules, approvals and run history", this::autonomyActivity);
             activitySection(body, "Appearance"); Spinner theme = new Spinner(this); String[] labels = {"System", "Warm charcoal", "Soft paper"}; String[] values = {"system", "dark", "light"}; theme.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, labels)); String savedTheme = getSharedPreferences("pocket-ui", 0).getString("theme", "system"); theme.setSelection(java.util.Arrays.asList(values).indexOf(savedTheme)); body.addView(theme); theme.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() { public void onNothingSelected(AdapterView<?> parent) { } public void onItemSelected(AdapterView<?> parent, View view, int position, long id) { if (!values[position].equals(getSharedPreferences("pocket-ui", 0).getString("theme", "system"))) { getSharedPreferences("pocket-ui", 0).edit().putString("theme", values[position]).apply(); recreate(); } } });
             settingsRow(body, "Advanced settings", "All original connection and voice controls", () -> { showAllSettings = true; settings(); });
         });
@@ -1185,8 +1199,8 @@ public final class MainActivity extends androidx.activity.ComponentActivity impl
         }));
         final int aiStart = panel.getChildCount();
         panel.addView(text("Provider")); Spinner mode = new Spinner(this);
-        String[] names = advanced ? new String[]{"Scripted model (local validation)", "API key (HTTPS)", "OpenCode Free (Console key)", "Nebius Token Factory", "Codex emulator relay (development)", "Codex account (ChatGPT)"} : new String[]{"Nebius Token Factory", "OpenCode Free", "Codex account"};
-        String[] modes = advanced ? new String[]{"scripted", "openai", CredentialStore.OPENCODE, CredentialStore.NEBIUS, "codex", CredentialStore.CODEX_ACCOUNT} : new String[]{CredentialStore.NEBIUS, CredentialStore.OPENCODE, CredentialStore.CODEX_ACCOUNT};
+        String[] names = advanced ? new String[]{"Scripted model (local validation)", "API key (HTTPS)", "OpenCode Free (Console key)", "Nebius Token Factory", "Codex emulator relay (development)", "Codex account (ChatGPT)", "ChatGPT desktop (Tailscale)"} : new String[]{"Nebius Token Factory", "OpenCode Free", "Codex account", "ChatGPT desktop (Tailscale)"};
+        String[] modes = advanced ? new String[]{"scripted", "openai", CredentialStore.OPENCODE, CredentialStore.NEBIUS, "codex", CredentialStore.CODEX_ACCOUNT, CredentialStore.CHATGPT_DESKTOP} : new String[]{CredentialStore.NEBIUS, CredentialStore.OPENCODE, CredentialStore.CODEX_ACCOUNT, CredentialStore.CHATGPT_DESKTOP};
         mode.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, names));
         String auth = saved.optString("authMode");
         String normalizedAuth = auth.equals("api-key") ? "openai" : auth.equals("codexRelay") || auth.equals("codex-relay") ? "codex" : auth;
@@ -1216,7 +1230,7 @@ public final class MainActivity extends androidx.activity.ComponentActivity impl
         final String[] sourceBeforeConnectionEdit = {savedModelSource[0]};
         final String[] modelBeforeConnectionEdit = {model.getText().toString().trim()};
         populateReasoningPicker(reasoning, model.getText().toString(), savedActiveReasoning[0],
-                modelSource[0].equals("manual"), savedReasoningModel[0], savedReasoningLevels[0]);
+                modelSource[0].equals("manual"), savedReasoningModel[0], savedReasoningLevels[0], modes[mode.getSelectedItemPosition()]);
         panel.addView(reasoning);
         TextView reasoningHelp = text("");
         panel.addView(reasoningHelp);
@@ -1242,7 +1256,7 @@ public final class MainActivity extends androidx.activity.ComponentActivity impl
                             ? selectedReasoningEffort(reasoning) : preferredReasoning[0];
                     populateReasoningPicker(reasoning, modelIds[position], pickerPreference,
                             false, savedProofApplies[0] ? savedReasoningModel[0] : "",
-                            savedProofApplies[0] ? savedReasoningLevels[0] : new String[0]);
+                            savedProofApplies[0] ? savedReasoningLevels[0] : new String[0], modes[mode.getSelectedItemPosition()]);
                 }
             }
             @Override public void onNothingSelected(AdapterView<?> parent) { }
@@ -1266,7 +1280,7 @@ public final class MainActivity extends androidx.activity.ComponentActivity impl
             String enteredKey = newKey[0] == null ? "" : newKey[0].getText().toString().trim();
             String apiKey = savedProviderKeyForEndpoint(currentSaved[0], selectedMode,
                     endpoint.getText().toString(), enteredKey);
-            if (apiKey.isEmpty()) { toast("Enter an API key before discovering models"); return; }
+            if (!selectedMode.equals(CredentialStore.CHATGPT_DESKTOP) && apiKey.isEmpty()) { toast("Enter an API key before discovering models"); return; }
             JSONObject draft = json("authMode", selectedMode, "endpoint", endpoint.getText().toString().trim(),
                     "model", model.getText().toString().trim(), "apiKey", apiKey);
             modelRequestId = Long.toHexString(System.nanoTime());
@@ -1329,8 +1343,9 @@ public final class MainActivity extends androidx.activity.ComponentActivity impl
             boolean account = selectedMode.equals(CredentialStore.CODEX_ACCOUNT);
             boolean openCode = selectedMode.equals(CredentialStore.OPENCODE);
             boolean nebius = selectedMode.equals(CredentialStore.NEBIUS);
+            boolean desktop = selectedMode.equals(CredentialStore.CHATGPT_DESKTOP);
             boolean fixedProvider = openCode || nebius;
-            boolean reasoningProvider = account || selectedMode.equals("openai") || selectedMode.equals("codex");
+            boolean reasoningProvider = desktop || account || selectedMode.equals("openai") || selectedMode.equals("codex");
             reasoning.setEnabled(reasoningProvider);
             reasoning.setAlpha(reasoningProvider ? 1.0f : 0.45f);
             reasoningHelp.setText(reasoningProvider
@@ -1359,11 +1374,12 @@ public final class MainActivity extends androidx.activity.ComponentActivity impl
                 accountStatusView.setText(status);
                 providerStatus.setText(profile.optString("accountId").isEmpty()
                         ? "Not signed in · Sign in to use this provider" : "Saved ChatGPT account · ready to reuse");
-            } else if (selectedMode.equals("scripted")) providerStatus.setText("Local test provider · no credentials needed");
+            } else if (desktop) providerStatus.setText(profile.optString("endpoint").isEmpty() ? "Enter your VPS Tailscale endpoint" : "Saved desktop endpoint · Tailscale required");
+            else if (selectedMode.equals("scripted")) providerStatus.setText("Local test provider · no credentials needed");
             else providerStatus.setText(profile.optString("apiKey").isEmpty()
                     ? "No saved key for this provider" : "Saved encrypted API key · ready to reuse");
             endpointPanel.setVisibility(account || fixedProvider ? View.GONE : View.VISIBLE);
-            secretPanel.setVisibility(account ? View.GONE : View.VISIBLE);
+            secretPanel.setVisibility(account || desktop ? View.GONE : View.VISIBLE);
             accountPanel.setVisibility(account ? View.VISIBLE : View.GONE);
             secret.setHint(openCode ? "OpenCode Console service-account key (required)" : nebius ? "Nebius API key (required)" : "API key / relay token (blank keeps saved value)");
             changingModel[0] = true;
@@ -1375,6 +1391,7 @@ public final class MainActivity extends androidx.activity.ComponentActivity impl
             } else if (account) model.setText(CredentialStore.CODEX_MODEL);
             else if (openCode) { endpoint.setText(CredentialStore.OPENCODE_ENDPOINT); model.setText(CredentialStore.OPENCODE_MODEL); }
             else if (nebius) { endpoint.setText(CredentialStore.NEBIUS_ENDPOINT); model.setText(CredentialStore.NEBIUS_MODEL); }
+            else if (desktop) { endpoint.setText(""); endpoint.setHint("http://100.x.y.z:19238"); model.setText("gpt-6-instant"); }
             else if (selectedMode.equals("codex")) { endpoint.setText("http://10.0.2.2:8787/v1"); model.setText(CredentialStore.CODEX_MODEL); }
             else if (selectedMode.equals("openai")) { endpoint.setText("https://api.openai.com/v1"); model.setText("gpt-4.1-mini"); }
             else { endpoint.setText("https://api.openai.com/v1"); model.setText("scripted"); }
@@ -1389,7 +1406,7 @@ public final class MainActivity extends androidx.activity.ComponentActivity impl
             String pickerPreference = sameProvider ? savedActiveReasoning[0] : preferredReasoning[0];
             populateReasoningPicker(reasoning, model.getText().toString(), pickerPreference,
                     modelSource[0].equals("manual"), sameConnection ? savedReasoningModel[0] : "",
-                    sameConnection ? savedReasoningLevels[0] : new String[0]);
+                    sameConnection ? savedReasoningLevels[0] : new String[0], modes[mode.getSelectedItemPosition()]);
         };
         final int[] lastProvider = {selected};
         mode.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
@@ -1429,7 +1446,7 @@ public final class MainActivity extends androidx.activity.ComponentActivity impl
                 manualModelEdited[0] = true;
                 picker.setSelection(0);
                 populateReasoningPicker(reasoning, value.toString().trim(), effort,
-                        true, "", new String[0]);
+                        true, "", new String[0], modes[mode.getSelectedItemPosition()]);
             }
         });
         TextWatcher connectionChanges = new TextWatcher() {
@@ -1460,12 +1477,13 @@ public final class MainActivity extends androidx.activity.ComponentActivity impl
                 savedProofApplies[0] = sameConnection;
                 picker.setEnabled(sameConnection);
                 populateReasoningPicker(reasoning, currentModel, effort, modelSource[0].equals("manual"),
-                        sameConnection ? savedReasoningModel[0] : "", sameConnection ? savedReasoningLevels[0] : new String[0]);
+                        sameConnection ? savedReasoningModel[0] : "", sameConnection ? savedReasoningLevels[0] : new String[0], modes[mode.getSelectedItemPosition()]);
             }
         };
         endpoint.addTextChangedListener(connectionChanges);
         secret.addTextChangedListener(connectionChanges);
         final int aiEnd = panel.getChildCount();
+        panel.addView(button("ChatGPT MCP",()->startActivity(new Intent(this,ChatGptMcpActivity.class))));
         if (BuildConfig.DEVELOPMENT_TOOLS) panel.addView(button("Development MCP and ngrok", () ->
             startActivity(new Intent().setClassName(this, "dev.pocket.agent.DevToolsActivity"))));
         panel.addView(button("Accessibility settings", () -> startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))));
@@ -1705,7 +1723,8 @@ public final class MainActivity extends androidx.activity.ComponentActivity impl
                     }
                     // Compare the effective key after blank-field retention, not model/preferences.
                     // Re-entering the saved key also must not trigger an automatic request.
-                    if (!testOnly[0] && config.optString("apiKey").equals(saved.optString("apiKey"))) {
+                    if (!testOnly[0] && config.optString("apiKey").equals(saved.optString("apiKey"))
+                            && (!selectedMode.equals(CredentialStore.CHATGPT_DESKTOP) || matchesSavedConnection(saved, selectedMode, config.optString("endpoint"), ""))) {
                         saveConnection.run(); return;
                     }
                     if (connectionTestId != null) { toast("Connection test is already running"); return; }

@@ -1,7 +1,9 @@
 /** Mobile adaptation: fixed application agent definitions; no directory discovery. */
-import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
+import type { ModelThinkingLevel as PiThinkingLevel } from "@earendil-works/pi-ai";
 import type { SpawnRequest } from "./schema.js";
-export const MODEL_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+// Preserve desktop thinking values through worker configuration and checkpoints.
+export type ModelThinkingLevel = PiThinkingLevel | "standard" | "extended";
+export const MODEL_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max", "standard", "extended"] as const;
 
 export function isModelThinkingLevel(value: unknown): value is ModelThinkingLevel {
   return typeof value === "string" && (MODEL_THINKING_LEVELS as readonly string[]).includes(value);

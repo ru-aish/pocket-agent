@@ -1,0 +1,32 @@
+name: ChatGPT desktop provider
+on:
+  push:
+    branches: [main, 'feat/**', 'fix/**']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: chatgpt-desktop-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  provider:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22.22.2'
+          cache: npm
+          cache-dependency-path: runtime/package-lock.json
+      - run: npm ci
+        working-directory: runtime
+      - name: Bundle provider for isolated VPS acceptance checks
+        run: runtime/node_modules/.bin/esbuild runtime/src/provider.ts runtime/src/model-catalog.ts runtime/test/chatgpt-desktop.acceptance.ts --bundle --platform=node --format=cjs --out-extension:.js=.cjs --outdir=acceptance --external:node:*
+      - uses: actions/upload-artifact@v6
+        with:
+          name: chatgpt-desktop-provider-runtime
+          path: acceptance/
+      - name: Runtime and UI regression tests
+        run: npm test && npm run build && npm run test:ui
+        working-directory: runtime

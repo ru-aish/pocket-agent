@@ -1,0 +1,25 @@
+# ChatGPT desktop over Tailscale
+
+Choose **ChatGPT desktop (Tailscale)** in Settings → AI & model. Enter the VPS's private desktop endpoint, for example `http://100.x.y.z:19238`, and select **Test & connect desktop**. Connect the phone to the same tailnet first. The test checks model discovery and a real inference before replacing the current connection. No API key or Codex account import is needed: sign in to the native ChatGPT desktop on the VPS.
+
+Discover models to select the account's available ChatGPT models and their advertised Standard/Extended thinking options. The main conversation and workers use the same provider integration. Workers may choose other discovered models through the normal subagent tool. Switching providers preserves saved connection profiles.
+
+The desktop endpoint must expose both `/json/list` and its `/devtools/page/…` WebSocket. Bind the listener to the VPS's Tailscale interface, keep it off public interfaces, and restrict access with tailnet ACLs: a debug endpoint grants control of the signed-in desktop account. PocketAgent accepts Tailscale IPv4 or loopback origins and connects directly; it does not need T3, a PC-side SSH tunnel, Terminal MCP, or a browser relay. Never put account tokens in the endpoint URL.
+
+PocketAgent owns phone tools, connected MCP tools, workers, task completion, saved messages, and resuming paused work. ChatGPT calls those tools through PocketAgent’s authenticated MCP connector. Tool requests are native ChatGPT connector calls; assistant text is never interpreted as executable tool JSON. Each inference receives a private session scope, and the phone checks the worker’s granted tools and arguments before execution. Request receipts prevent the same logical call from executing twice after an uncertain response.
+
+## Connect ChatGPT to the phone
+
+1. Open **Settings → ChatGPT MCP → Connection address**. Save an ngrok token privately on the phone, or configure a public HTTPS gateway forwarding to this phone’s `127.0.0.1:8768`. The native ngrok tunnel supports ARM64 phones. An external gateway is available for other architectures.
+2. Start the MCP connection and copy its **MCP URL**. This HTTPS address is different from the private VPS desktop endpoint above: ChatGPT’s servers need to reach the phone’s MCP service.
+3. Add a custom app named **PocketAgent** in the ChatGPT account signed in on the VPS. Use the copied URL and choose **OAuth**. Enter the **pairing code** shown on the phone when the authorization page opens. Account and workspace settings must allow custom MCP apps.
+4. The code expires after five minutes and works once. The settings screen refreshes expired codes and can issue a new one immediately. Authorized connections use short-lived access tokens and rotating refresh tokens; they do not need a new pairing code for every request.
+5. Start tasks from PocketAgent. Native connector approvals are handled only when they name PocketAgent, target the exact active session and granted tool, and offer a one-use Allow action. Other approval requests need attention in ChatGPT.
+
+Keep the foreground connection notification running for background tool access. **Stop MCP connection** takes the endpoint offline; **Revoke all connections** invalidates stored grants and requires pairing again. Credentials stay encrypted in Android Keystore-backed storage. The production connector provides tools without development history/event inspection. Changing the public HTTPS origin invalidates old grants, so reconnect ChatGPT if the address changes. A custom external gateway must be configured separately; saving its origin does not provision forwarding.
+
+Text and reasoning stream into the normal chat UI. Cancellation targets only the current native request. If the debug connection drops, the adapter rebinds the same request and recovers its output; it does not blindly resend the prompt. If the desktop loses the request, recovery accepts only a completed canonical history branch containing the exact submitted message. Otherwise it reports an error. Saved PocketAgent history is retained, including real tool results, and is supplied on subsequent inference calls. Each inference segment uses an independent native conversation, which keeps main and worker contexts separate.
+
+There is a 15-minute inference deadline and a limit of four active PocketAgent native requests per renderer. This is a safety bound, not a throughput guarantee for a 1 GB VPS. The desktop does not provide reliable token usage or API billing metrics through this transport; zero usage fields mean unavailable measurements, not free inference. The integration depends on the desktop's internal renderer protocol, which can change with app updates. Keep a compatible desktop version and use the connection test after updating it.
+
+This provider does not copy T3's Terminal-specific “task done versus native final” forced-completion timers: PocketAgent's existing agent and worker lifecycle owns those decisions. A missing or invalid native final ends in an explicit provider error rather than silently marking phone work successful.

@@ -64,7 +64,7 @@ android {
             }
         }
     }
-    sourceSets.getByName("development").jniLibs.srcDir(layout.buildDirectory.dir("generated/ngrok-jni").get().asFile)
+    sourceSets.getByName("main").jniLibs.srcDir(layout.buildDirectory.dir("generated/ngrok-jni").get().asFile)
     sourceSets.getByName("main").assets.srcDir(layout.buildDirectory.dir("generated/pocket-ui").get().asFile)
     splits { abi { isEnable=true; reset(); include("arm64-v8a", "x86_64"); isUniversalApk=true } }
     testBuildType = if (providers.gradleProperty("uiPreview").isPresent || providers.gradleProperty("isolatedDeviceValidation").isPresent) "debug" else if (providers.gradleProperty("devEmulatorTest").isPresent) "development" else if (providers.gradleProperty("voiceEmulatorTest").isPresent) "debug" else "release"
@@ -81,18 +81,18 @@ dependencies {
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.21.0")
     implementation("dev.rikka.shizuku:api:13.1.5")
     implementation("dev.rikka.shizuku:provider:13.1.5")
-    add("developmentImplementation", "org.nanohttpd:nanohttpd:2.3.1")
-    add("developmentImplementation", "com.ngrok:ngrok-java:1.1.1")
+    implementation("org.nanohttpd:nanohttpd:2.3.1")
+    implementation("com.ngrok:ngrok-java:1.1.1")
     add("ngrokNativeClasses", "com.ngrok:ngrok-java-native:1.1.1")
     add("ngrokAndroidArm64", "com.ngrok:ngrok-java-native:1.1.1:linux-android-aarch_64")
-    add("developmentImplementation", files(androidNgrokJar))
+    implementation(files(androidNgrokJar))
     androidTestImplementation("androidx.test:runner:1.6.2")
     androidTestImplementation("org.jetbrains.kotlin:kotlin-stdlib:1.9.10")
     androidTestImplementation("androidx.test:rules:1.6.1")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("com.google.errorprone:error_prone_annotations:2.36.0")
 }
-tasks.matching { it.name == "mergeDevelopmentJniLibFolders" }.configureEach {
+tasks.matching { it.name.startsWith("merge") && it.name.endsWith("JniLibFolders") }.configureEach {
     dependsOn(extractNgrokArm64)
 }
 tasks.named("preBuild").configure { dependsOn(syncPocketUi) }

@@ -96,3 +96,7 @@ For the latest test build from `main`, open the [**Development prerelease**](htt
 - [Authentication and relay setup](docs/AUTH.md)
 - [Validation evidence and remaining limits](docs/VALIDATION.md)
 - [Original implementation requirements](docs/IMPLEMENTATION_HANDOFF.md)
+
+### ChatGPT desktop on a VPS
+
+Use the signed-in native ChatGPT desktop over Tailscale as an inference provider, with PocketAgent-owned tools and workers. See [setup and provider behavior](docs/CHATGPT_DESKTOP.md).

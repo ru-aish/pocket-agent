@@ -11,7 +11,7 @@ const emittedInputs=Object.entries(output.inputs).filter(([,data])=>data.bytesIn
 const report={bytes,gzipBytes:gzipSync(await readFile('dist/runtime.cjs')).length,inputs:Object.keys(result.metafile.inputs),emittedInputs,note:'JavaScript bundle only; excludes Javet/Node native libraries and Android resources. Not APK size or RAM. inputs are parsed graph; emittedInputs measures post-tree-shaking source contributions.'};
 await writeFile('dist/bundle-report.json',JSON.stringify(report,null,2));
 let notices='';
-for(const [name,path] of [['Pi9','vendor/pi9/LICENSE'],['Pi','PI-LICENSE'],['Pi MCP','PI-LICENSE'],['MCP TypeScript SDK','node_modules/@earendil-works/pi-mcp/LICENSES/modelcontextprotocol-typescript-sdk.txt'],['OpenAI SDK','node_modules/openai/LICENSE'],['TypeBox','node_modules/typebox/license'],['partial-json','node_modules/partial-json/LICENSE']])notices+=`\n\n${name}\n${await readFile(path,'utf8')}`;
+for(const [name,path] of [['T3 ChatGPT renderer protocol','vendor/t3-chatgpt/LICENSE'],['Pi9','vendor/pi9/LICENSE'],['Pi','PI-LICENSE'],['Pi MCP','PI-LICENSE'],['MCP TypeScript SDK','node_modules/@earendil-works/pi-mcp/LICENSES/modelcontextprotocol-typescript-sdk.txt'],['OpenAI SDK','node_modules/openai/LICENSE'],['TypeBox','node_modules/typebox/license'],['partial-json','node_modules/partial-json/LICENSE']])notices+=`\n\n${name}\n${await readFile(path,'utf8')}`;
 await writeFile('dist/THIRD_PARTY_NOTICES.txt',notices);
 const manifest={protocol:1,pi:'1.2.0',piCommit:'dc939913f6142adce7c09da5707fdd6451b37fb0',piMcp:'1.2.0',piMcpCommit:'06a466935536f8c9bcacb2d5efc0fc021be1bdff',pi9:'0.12.0',pi9Commit:'94405f79bb1e400fcba5e1b973778ef82d8378b2',...report};
 await writeFile('dist/runtime-manifest.json',JSON.stringify(manifest,null,2));

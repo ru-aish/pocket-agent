@@ -96,6 +96,8 @@ test('direct Codex wires configured reasoning for main and workers and sanitizes
  for(const [configured,owner,proof,withLevels,expected] of [
    ['minimal','main','gpt-6-luna',true,'minimal'],
    ['low','main',undefined,false,'low'],
+   ['standard','main',undefined,false,'low'],
+   ['extended','main',undefined,false,'low'],
    ['medium','main','gpt-6-luna',true,'medium'],
    ['high','main','gpt-6-luna',true,'high'],
    ['xhigh','main','gpt-6-luna',true,'xhigh'],

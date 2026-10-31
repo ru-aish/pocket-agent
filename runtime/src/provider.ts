@@ -7,11 +7,13 @@ import { streamSimple as codexStreamSimple } from '@earendil-works/pi-ai/api/ope
 import { AssistantMessageEventStream } from '@earendil-works/pi-ai/utils/event-stream';
 import { SCRIPT_MODEL, scriptedStream } from './scripted.js';
 import {CODEX_RESPONSES_URL,ensureCodexCredentials,redactProviderSecrets,type CodexCredentialInput} from './codex-auth.js';
+import type {DesktopConnector} from './desktop-connector.js';
+import {DESKTOP_THINKING_EFFORTS,desktopEndpoint,desktopStream} from './chatgpt-desktop.js';
 import {codexFailure} from './codex-errors.js';
 export {registerCodexCredentialUpdater,redactProviderSecrets} from './codex-auth.js';
 
 export interface ProviderConfig {
-  mode?: 'scripted' | 'openai' | 'codex' | 'codex-account' | 'opencode' | 'nebius';
+  mode?: 'scripted' | 'openai' | 'codex' | 'codex-account' | 'opencode' | 'nebius' | 'chatgpt-desktop';
   endpoint?: string;
   model?: string;
   reasoningEffort?: ReasoningEffort;
@@ -27,7 +29,7 @@ export interface ProviderCredentials extends CodexCredentialInput {
 type ProviderModel = Model<'openai-responses'> | Model<'openai-codex-responses'> | Model<'openai-completions'>;
 export const OPENCODE_BASE_URL = 'https://opencode.ai/inference/openai/v1';
 export const NEBIUS_BASE_URL = 'https://api.tokenfactory.nebius.com/v1';
-export const REASONING_EFFORTS = ['minimal','low','medium','high','xhigh','max'] as const;
+export const REASONING_EFFORTS = DESKTOP_THINKING_EFFORTS;
 export type ReasoningEffort = typeof REASONING_EFFORTS[number];
 export const DEFAULT_REASONING_EFFORT: ReasoningEffort = 'low';
 const REASONING_EFFORT_SET = new Set<string>(REASONING_EFFORTS);
@@ -69,12 +71,12 @@ export function modelFor(config: ProviderConfig, credentials: ProviderCredential
   const configured = credentials.endpoint || config.endpoint;
   if (fixed && configured && configured.replace(/\/$/, '') !== fixed) throw new Error('This provider uses a fixed API endpoint.');
   const endpoint = account ? CODEX_RESPONSES_URL : fixed || configured || (relay ? 'http://10.0.2.2:8787/v1' : 'https://api.openai.com/v1');
-  const url = new URL(endpoint);
+  const url = new URL(mode==='chatgpt-desktop'?desktopEndpoint(configured):endpoint);
   if (url.username || url.password || url.search || url.hash) throw new Error('Provider endpoint must be a base URL without credentials, query or fragment.');
   if (relay) {
     if (url.protocol !== 'http:' || !['10.0.2.2', '127.0.0.1', 'localhost'].includes(url.hostname)) throw new Error('Codex relay is restricted to the Android emulator host or loopback.');
-  } else if (url.protocol !== 'https:') throw new Error('Direct API providers require HTTPS.');
-  const id = override || credentials.model || config.model || (account ? 'gpt-6-luna' : mode === 'opencode' ? 'big-pickle' : mode === 'nebius' ? 'zai-org/GLM-5.3-Flash' : 'gpt-6-sol');
+  } else if (mode!=='chatgpt-desktop' && url.protocol !== 'https:') throw new Error('Direct API providers require HTTPS.');
+  const id = override || credentials.model || config.model || (account ? 'gpt-6-luna' : mode === 'opencode' ? 'big-pickle' : mode === 'nebius' ? 'zai-org/GLM-5.3-Flash' : mode==='chatgpt-desktop' ? 'gpt-6-instant' : 'gpt-6-sol');
   if (!/^[a-zA-Z0-9._:/+@-]{1,160}$/.test(id)) throw new Error('Invalid model identifier.');
   if (mode === 'opencode' || mode === 'nebius') {
     return {
@@ -89,7 +91,7 @@ export function modelFor(config: ProviderConfig, credentials: ProviderCredential
     };
   }
   return {
-    id, name: id, provider: account ? 'openai-codex' : 'openai', api: account ? 'openai-codex-responses' : 'openai-responses',
+    id, name: id, provider: mode==='chatgpt-desktop' ? 'chatgpt-desktop' : account ? 'openai-codex' : 'openai', api: account ? 'openai-codex-responses' : 'openai-responses',
     baseUrl: url.toString().replace(/\/$/, ''), input: ['text', 'image'],
     reasoning: true, contextWindow: 128000, maxTokens: 4096,
     thinkingLevelMap: selectedThinkingLevelMap(config,credentials),
@@ -236,7 +238,7 @@ function fixedCodexFetch(fetcher: typeof fetch, budget: {attempts:number;error?:
   }) as typeof fetch;
 }
 
-export function makeStream(config: ProviderConfig, credentials: ProviderCredentials = {}, owner: any, reasoningOverride?: ReasoningEffort, supportedReasoning?: readonly ReasoningEffort[], modelSource = credentials.modelSource): StreamFn {
+export function makeStream(config: ProviderConfig, credentials: ProviderCredentials = {}, owner: any, reasoningOverride?: ReasoningEffort, supportedReasoning?: readonly ReasoningEffort[], modelSource = credentials.modelSource,connector?:DesktopConnector): StreamFn {
   if (config.mode === 'scripted') return scriptedStream(owner);
   return async(_model, context, options)=>{
     let model: ProviderModel | undefined;
@@ -245,20 +247,27 @@ export function makeStream(config: ProviderConfig, credentials: ProviderCredenti
     try {
       model = modelFor(config,credentials,_model?.id);
       if (options?.signal?.aborted) return failure(model,'Request cancelled.',true);
+      if(mode==='chatgpt-desktop') {
+        const requested=reasoningOverride??config.reasoningEffort;
+        const levels=supportedReasoning??(credentials.reasoningEffortModel===model.id?credentials.reasoningEfforts:undefined);
+        const effort=levels ? levels.includes(requested??'')?requested:levels.includes('standard')?'standard':levels[0] : requested;
+        return desktopStream(model,context,owner,effort,{...options,effortVerified:levels!==undefined,connector});
+      }
       let apiKey = credentials.apiKey;
       if (account) apiKey = (await ensureCodexCredentials(credentials,{signal:options?.signal,fetch:options?.fetch})).accessToken;
       else if (mode === 'opencode' && !apiKey?.trim()) return failure(model,'Configure an OpenCode Console service-account key before sending.');
       else if (mode === 'nebius' && !apiKey?.trim()) return failure(model,'Configure a Nebius API key before sending.');
       else if (!apiKey?.trim()) return failure(model,'Configure a provider credential before sending.');
       if (options?.signal?.aborted) return failure(model,'Request cancelled.',true);
+      const normalizeApiEffort=(value:unknown)=>value==='standard'||value==='extended'?DEFAULT_REASONING_EFFORT:normalizeReasoningEffort(value);
       const requestedReasoning = configurableReasoningMode(mode) && (owner === 'main' || reasoningOverride !== undefined)
-        ? normalizeReasoningEffort(reasoningOverride ?? config.reasoningEffort)
+        ? normalizeApiEffort(reasoningOverride ?? config.reasoningEffort)
         : DEFAULT_REASONING_EFFORT;
       const hasCatalogReasoning = Array.isArray(supportedReasoning);
       const advertisedReasoning = hasCatalogReasoning
-        ? supportedReasoning!.filter(value => REASONING_EFFORT_SET.has(value))
+        ? supportedReasoning!.filter(value => REASONING_EFFORT_SET.has(value)&&value!=='standard'&&value!=='extended')
         : Array.isArray(credentials.reasoningEfforts)
-          ? credentials.reasoningEfforts.filter(value => REASONING_EFFORT_SET.has(value))
+          ? credentials.reasoningEfforts.filter(value => REASONING_EFFORT_SET.has(value)&&value!=='standard'&&value!=='extended')
           : [];
       const manualModel = modelSource === 'manual' && credentials.model === model.id;
       const modelLevels = !manualModel && (hasCatalogReasoning || credentials.reasoningEffortModel === model.id)

@@ -29,6 +29,21 @@ test('failed draft validation preserves the saved key without exposing rejected 
   assert.equal(service.status().providers.opencode.configured,false);
 });
 
+test('desktop profile validates its endpoint without requiring a key and preserves other profiles',async t=>{
+  const drafts=[];
+  const {service}=await setup(t,{validateDraft:async draft=>{drafts.push({...draft});}});
+  await service.saveKey({provider:'nebius',apiKey:'fixture-saved-key'});
+  await service.saveKey({provider:'chatgpt-desktop',endpoint:'http://100.64.0.2:19238',model:'gpt-6-instant'});
+  assert.deepEqual(drafts[1],{authMode:'chatgpt-desktop',endpoint:'http://100.64.0.2:19238',model:'gpt-6-instant'});
+  assert.equal(service.status().providers['chatgpt-desktop'].configured,true);
+  assert.equal(service.status().providers['chatgpt-desktop'].endpoint,'http://100.64.0.2:19238');
+  await assert.rejects(service.chat({provider:'chatgpt-desktop',reasoning:'extended',messages:[{role:'user',text:'Hello'}]}),/Discover this model/);
+  await assert.rejects(service.chat({provider:'nebius',reasoning:'extended',messages:[{role:'user',text:'Hello'}]}),/valid reasoning effort/);
+  await service.disconnect('chatgpt-desktop');
+  assert.equal(service.status().providers['chatgpt-desktop'].configured,false);
+  assert.equal(service.status().providers.nebius.configured,true);
+});
+
 test('Codex device sign-in exchanges authorization and persists an encrypted usable account',async t=>{
   // Given: the same fixed device-code endpoints used by CodexAccountAuth.java.
   const account=fixtureAccount();let calls=0;const terminal=Promise.withResolvers();

@@ -5,11 +5,11 @@ import {CODEX_CLIENT_ID,codexAccessClaims,registerCodexCredentialUpdater,ensureC
 
 const AUTH='https://auth.openai.com';
 const VERIFY=AUTH+'/codex/device';
-const PROVIDERS=new Set(['codex-account','nebius','opencode']);
-const DEFAULTS={'codex-account':'gpt-6-luna',nebius:'zai-org/GLM-5.3-Flash',opencode:'big-pickle'};
+const PROVIDERS=new Set(['codex-account','nebius','opencode','chatgpt-desktop']);
+const DEFAULTS={'chatgpt-desktop':'gpt-6-instant','codex-account':'gpt-6-luna',nebius:'zai-org/GLM-5.3-Flash',opencode:'big-pickle'};
 export class ProviderFailure extends Error {constructor(message,status=400){super(message);this.status=status;}}
 function fail(message,status){throw new ProviderFailure(message,status);}
-function provider(value){if(!PROVIDERS.has(value))fail('Choose Nebius, OpenCode, or Codex.');return value;}
+function provider(value){if(!PROVIDERS.has(value))fail('Choose Nebius, OpenCode, Codex, or ChatGPT desktop.');return value;}
 function token(value,max=32768){if(typeof value!=='string'||!value||value.length>max||/[\u0000-\u0020\u007f]/.test(value))fail('Credential data is missing or malformed.');return value;}
 export function parseAccount(document){
   const source=document?.tokens||document?.['openai-codex']||document;
@@ -41,7 +41,7 @@ export async function createProviderService({directory,fetcher=fetch,wait=delay,
   const cached=new Map(),discovered=new Map();
   function mutable(){if(activeRequests)fail('Wait for the current provider request to finish.',409);titleController?.abort();}
   function stopLogin(){generation++;loginController?.abort();loginController=undefined;}
-  function status(){return {providers:Object.fromEntries([...PROVIDERS].map(id=>[id,{configured:Boolean(vault.get(id)),kind:id==='codex-account'?'account':'key'}])),voice:{configured:Boolean(vault.get('deepgram')),deepgram:Boolean(vault.get('deepgram')),groq:Boolean(vault.get('groq'))},auth:{...auth}};}
+  function status(){return {providers:Object.fromEntries([...PROVIDERS].map(id=>[id,{configured:Boolean(vault.get(id)),kind:id==='codex-account'?'account':id==='chatgpt-desktop'?'desktop':'key',...(id==='chatgpt-desktop'?{endpoint:vault.get(id)?.endpoint||''}:{})}])),voice:{configured:Boolean(vault.get('deepgram')),deepgram:Boolean(vault.get('deepgram')),groq:Boolean(vault.get('groq'))},auth:{...auth}};}
   function notify(){try{onAuthState(status());}catch{/* Observers cannot change credential persistence. */}}
   function credentials(id){
     const saved=vault.get(id);if(!saved)fail(id==='codex-account'?'Sign in to Codex or import auth.json first.':'Save your provider key first.',409);
@@ -94,15 +94,15 @@ export async function createProviderService({directory,fetcher=fetch,wait=delay,
   function config(input){
     const id=provider(input.provider);const model=input.model||DEFAULTS[id];
     if(typeof model!=='string'||!/^[A-Za-z0-9._:/+@-]{1,160}$/.test(model))fail('Enter a valid model ID.');
-    const levels=new Set(['minimal','low','medium','high','xhigh','max']);
+    const levels=new Set(['minimal','low','medium','high','xhigh','max',...(id==='chatgpt-desktop'?['standard','extended']:[])]);
     const reasoningEffort=input.reasoning||'low';if(!levels.has(reasoningEffort))fail('Choose a valid reasoning effort.');
-    const selected={mode:id,model,reasoningEffort};
+    const selected={mode:id,model,reasoningEffort,...(id==='chatgpt-desktop'?{endpoint:credentials(id).endpoint}:{})};
     const credential=credentials(id);credential.model=model;
     const proof=(discovered.get(id)||credential.modelCatalog||[]).find(entry=>entry.id===model);
     credential.modelSource=id==='codex-account'?'catalog':'manual';
     credential.reasoningEffortModel=proof?model:'';
     credential.reasoningEfforts=proof?.supportedReasoningLevels||[];
-    if(id==='codex-account'&&reasoningEffort!=='low'&&!credential.reasoningEfforts.includes(reasoningEffort))fail('Discover this model and choose a supported reasoning effort first.');
+    if(['codex-account','chatgpt-desktop'].includes(id)&&reasoningEffort!=='low'&&!credential.reasoningEfforts.includes(reasoningEffort))fail('Discover this model and choose a supported reasoning effort first.');
     return {selected,credential};
   }
   return {
@@ -123,7 +123,7 @@ export async function createProviderService({directory,fetcher=fetch,wait=delay,
     },
     cancel(){stopLogin();auth={state:'cancelled'};return status();},
     async importAccount(document){mutable();const account=parseAccount(document);stopLogin();await vault.update(state=>{state['codex-account']=account;});cached.delete('codex-account');discovered.delete('codex-account');auth={state:'connected'};return status();},
-    async saveKey(input){mutable();const id=provider(input.provider);if(id==='codex-account')fail('Codex uses account sign-in, not an API key.');const apiKey=token(input.apiKey,16384),draft={authMode:id,apiKey,model:input.model||DEFAULTS[id]};activeRequests++;try{await validateDraft(draft,fetcher);await vault.update(state=>{state[id]=draft;});cached.delete(id);discovered.delete(id);return status();}catch{fail('Provider connection test failed. Check the key, model access and quota. Settings were not saved.',502);}finally{activeRequests--;}},
+    async saveKey(input){mutable();const id=provider(input.provider);if(id==='codex-account')fail('Codex uses account sign-in, not an API key.');const draft=id==='chatgpt-desktop'?{authMode:id,endpoint:input.endpoint,model:input.model||DEFAULTS[id]}:{authMode:id,apiKey:token(input.apiKey,16384),model:input.model||DEFAULTS[id]};activeRequests++;try{await validateDraft(draft,fetcher);await vault.update(state=>{state[id]=draft;});cached.delete(id);discovered.delete(id);return status();}catch{fail('Provider connection test failed. Check the connection, model access and quota. Settings were not saved.',502);}finally{activeRequests--;}},
     async disconnect(id){mutable();provider(id);if(id==='codex-account'){stopLogin();auth={state:'idle'};}await vault.update(state=>{delete state[id];});cached.delete(id);discovered.delete(id);return status();},
     async saveVoiceKey(apiKey,engine='deepgram'){if(!['deepgram','groq'].includes(engine))fail('Choose a supported speech engine.');const key=token(apiKey,512);await vault.update(state=>{state[engine]={apiKey:key};});return status();},
     async disconnectVoice(engine='deepgram'){if(!['deepgram','groq'].includes(engine))fail('Choose a supported speech engine.');await vault.update(state=>{delete state[engine];});return status();},
