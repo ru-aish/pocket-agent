@@ -34,7 +34,7 @@ function fixture(t:any,answer:(request:any,index:number)=>any,dropAtStart=false,
   const previous=globalThis.WebSocket;
   const sockets=new Set<FakeSocket>();const requests:any[]=[];let stops=0,connections=0;let deferredFinish:(()=>void)|undefined;
   const native={
-    get:async()=>({}),list:async()=>({}),
+    get:async()=>options.get?options.get():({}),list:async()=>({}),
     models:async()=>{modelsStarted.resolve();if(options.modelGate)await options.modelGate;return {models:options.models??[{slug:'gpt-6-thinking',title:'Thinking',thinking_efforts:['standard','extended']},{slug:'gpt-disabled',disabled:true}]};},
     stopCompletion:async()=>{stops++;},cancelStream:()=>{stops++;},
     startCompletionStream:(args:any)=>{
@@ -44,6 +44,7 @@ function fixture(t:any,answer:(request:any,index:number)=>any,dropAtStart=false,
         const resolved=await response;
         if(nativeError){args.onError({});return;}
         const text=resolved.text,conversation_id='fixture-conversation-'+requests.length;
+        if(resolved.approval){args.onUpdate({conversation_id,message:resolved.approval});args.onComplete({conversation_id});return;}
         for(const [index,block] of (options.fragments??[text]).entries())for(const length of [Math.floor(block.length/2),block.length])args.onUpdate({conversation_id,message:{id:'fixture-answer-'+index,author:{role:'assistant'},channel:'final',recipient:'all',content:{content_type:'text',parts:[block.slice(0,length)]},status:'finished_successfully',end_turn:length===block.length}});
         if(pauseUntilRebind)deferredFinish=()=>args.onComplete({conversation_id});else args.onComplete({conversation_id});
       });
@@ -225,4 +226,19 @@ test('native MCP workers execute under their own owner and deliver durable resul
   assert.equal(calls.length,1);assert.equal(saved.delivered.length,1);
   const worker=saved.workerMessages[calls[0].owner];assert.ok(worker.some((message:any)=>message.role==='toolResult'&&message.toolName==='phone_capabilities'));
   assert.ok(saved.mainMessages.some((message:any)=>message.role==='toolResult'&&message.toolName==='subagent'));
+});
+
+test('native one-use approval continues the same conversation without resending the user prompt',{timeout:20000},async t=>{
+  let pending:any;const router=new DesktopToolRouter({tools:()=>[{name:'read_fixture',description:'Read fixture',parameters:Type.Object({}),execute:async()=>({content:[{type:'text',text:'verified-native-call'}]})}],persist:()=>true,record:()=>{}});
+  const f=fixture(t,async(request,index)=>{
+    if(index===1){const session=request.messages[0].content.parts[0].match(/exact pocket_session is ([a-f0-9-]+)/)[1];
+      pending={id:'approval-head',author:{role:'tool'},metadata:{jit_plugin_data:{from_server:{type:'confirm_action',body:{connector_name:'PocketAgent',connector_id:'asdk_app_test',link_id:'link_test',codex_mcp_elicitation:{kind:'mcpToolCall',status:'pending'},params:{path:'/asdk_app_test/link_test/read_fixture',args:{pocket_session:session,pocket_request:'read-one'}},actions:[{allow:{target_message_id:'approval-head'}}]}}}}};return {approval:pending};
+    }
+    assert.equal(request.parent_message_id,'approval-head');assert.equal(request.conversation_id,'fixture-conversation-1');assert.equal(request.messages[0].author.role,'tool');
+    assert.deepEqual(request.messages[0].metadata.jit_plugin_data.from_client,{target_message_id:'approval-head',type:'allow',remember_answer:false});
+    const result=await router.call('authorized','read_fixture',pending.metadata.jit_plugin_data.from_server.body.params.args);return {text:result.content[0].text};
+  },false,false,false,{get:()=>({current_node:'head',mapping:{head:{message:pending,parent:'user'},user:{message:f.requests[0].messages[0],parent:null}}})});
+  const source=makeStream(config,{},'main',undefined,undefined,undefined,router);
+  const result=await(await source(modelFor(config,{}),{messages:[],tools:[{name:'read_fixture',description:'Read fixture',parameters:Type.Object({})}]},{fetch:f.fetcher,signal:t.signal})).result();
+  assert.equal(result.stopReason,'stop',result.errorMessage);assert.equal((result.content[0] as any).text,'verified-native-call');assert.equal(f.requests.length,2);
 });

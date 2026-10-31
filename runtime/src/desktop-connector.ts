@@ -20,9 +20,10 @@ export class DesktopToolRouter implements DesktopConnector {
     signal.throwIfAborted();
     if(this.bindings.size>=16)throw Error('Too many active ChatGPT MCP sessions');
     if(!this.bindings.size&&!this.pending.size)this.receipts={};
-    const sessionId=randomUUID(),binding:Binding={owner,names:new Set(names),signal,calls:0};
+    const local=new AbortController();
+    const sessionId=randomUUID(),binding:Binding={owner,names:new Set(names),signal:AbortSignal.any([signal,local.signal]),calls:0};
     this.bindings.set(sessionId,binding);
-    const close=()=>{this.bindings.delete(sessionId);signal.removeEventListener('abort',close);};
+    const close=()=>{this.bindings.delete(sessionId);signal.removeEventListener('abort',close);local.abort();};
     signal.addEventListener('abort',close,{once:true});return {sessionId,close};
   }
   list():any[] {
