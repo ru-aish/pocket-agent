@@ -187,6 +187,7 @@ export function desktopStream(model:Model<any>,context:Context,owner:string,effo
     const mergeBlock=(blocks:Map<string,string>,event:NativeUpdate)=>{
       const id=event.messageId??'default',previous=blocks.get(id),incoming=event.text??previous??'';
       if(!previous||!previous.startsWith(incoming)||incoming.length>=previous.length)blocks.set(id,incoming);
+      if(blocks.size>2048||[...blocks.values()].reduce((bytes,block)=>bytes+block.length,0)>4_000_000)throw new DesktopInferenceError('Desktop retained response exceeded its size limit.');
       const merged=[...blocks.values()].reduce((text,block)=>mergeFinalAnswer(text,block),'');
       if(merged.length>2_000_000)throw new DesktopInferenceError('Desktop response exceeded its size limit.');
       return merged;
@@ -263,17 +264,17 @@ export function desktopStream(model:Model<any>,context:Context,owner:string,effo
         if([...states.values()].filter(s=>!s.complete&&!s.cancelled).length>=4||states.size>=64)throw Error('Desktop concurrency limit reached');
         if(cancelled?.has(${JSON.stringify(requestId)}))return false;const s={createdAt:Date.now(),id:${JSON.stringify(requestId)},owner:${JSON.stringify(createHash('sha256').update(owner).digest('hex'))},binding:${JSON.stringify(binding)},conversationId:null,updates:new Map(),complete:false,cancelled:false,startup:new AbortController()};states.set(s.id,s);
         const emit=(kind,value)=>{if(s.cancelled)return;const v=value&&typeof value==='object'?value:{};const candidate=v.message||v.data||v;s.conversationId=v.conversation_id||v.conversationId||candidate.conversation_id||candidate.conversationId||s.conversationId;
-          let normalized;try{const __name=value=>value;normalized=(${normalizeStreamMessage.toString()})(value,'pocket-desktop');}catch{normalized={};kind='error';}const event={...normalized,kind,conversationId:s.conversationId};if(normalized.messageId)s.updates.set(normalized.messageId,event);s.last=event;if(kind==='complete'||kind==='error')s.complete=true;if(typeof window[s.binding]==='function')window[s.binding](JSON.stringify(event));};
+          let normalized;try{const __name=value=>value;normalized=(${normalizeStreamMessage.toString()})(value,'pocket-desktop');}catch{normalized={};kind='error';}const event={...normalized,kind,conversationId:s.conversationId};if(kind==='update'&&normalized.role==='assistant'&&(!normalized.channel||normalized.channel==='final')&&normalized.endTurn)s.sawFinal=true;if(normalized.messageId)s.updates.set(normalized.messageId,event);if(s.updates.size>2048||JSON.stringify([...s.updates.values()]).length>4_000_000){kind='error';event.kind='error';}s.last=event;if(kind==='complete'||kind==='error')s.complete=true;if(typeof window[s.binding]==='function')window[s.binding](JSON.stringify(event));};
         const initialRequest=${JSON.stringify(request)},sessionId=${JSON.stringify(toolSession?.sessionId??'')},names=${JSON.stringify(prompt.tools.map(tool=>tool.name))};
         const __name=value=>value;const approval=value=>(${pocketApproval.toString()})(value,sessionId,names);
         s.attempted=new Set();s.segment=0;
         const start=next=>{
-          if(s.cancelled)return;const segment=++s.segment;
+          if(s.cancelled)return;s.sawFinal=false;const segment=++s.segment;
           s.handle=r.client.startCompletionStream({request:next,startupSignal:s.startup.signal,
             onUpdate:v=>{if(segment===s.segment)emit('update',v);},
             onError:v=>{if(segment===s.segment)emit('error',v);},
             onComplete:v=>{if(segment!==s.segment||s.cancelled)return;void(async()=>{
-              if(sessionId&&s.conversationId){
+              if(sessionId&&s.conversationId&&!s.sawFinal){
                 const raw=await r.client.get(s.conversationId);const c=raw.conversation||raw.data||raw;
                 const head=c.mapping?.[c.current_node]?.message,pending=approval(head);
                 if(pending){

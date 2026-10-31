@@ -14,7 +14,7 @@ function fixture(){
 test('native connector validates schemas and restricts calls to active worker grants',async()=>{
  const f=fixture();
  assert.equal(f.router.list()[0].inputSchema.required.includes('pocket_session'),true);
- await assert.rejects(f.router.call('grant','read_fixture',{...f.args(),value:42}));
+ await assert.rejects(f.router.call('grant','read_fixture',{...f.args(),value:{unexpected:true}}));
  await assert.rejects(f.router.call('grant','unknown',f.args()),/not granted/);
  const worker=f.router.open('restricted',['read_fixture'],f.controller.signal);
  await assert.rejects(f.router.call('grant','read_fixture',{...f.args(),pocket_session:worker.sessionId}),/not granted/);

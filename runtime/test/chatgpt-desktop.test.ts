@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {Agent} from '@earendil-works/pi-agent-core';
+import {PocketRuntime} from '../src/runtime.js';
+import {emptyAutonomy} from '../src/autonomy.js';
 import {Type} from 'typebox';
 import {DesktopCdp,desktopEndpoint,desktopModels,desktopPrompt} from '../src/chatgpt-desktop.js';
 import {DesktopToolRouter} from '../src/desktop-connector.js';
@@ -192,4 +194,35 @@ test('unverified API-style default efforts are omitted from native requests',{ti
   const f=fixture(t,()=>({text:'OK',toolCalls:[]}));
   const result=await(await makeStream({...config,reasoningEffort:'low'},{},'main')(modelFor(config,{}),{messages:[]},{fetch:f.fetcher,signal:t.signal})).result();
   assert.equal(result.stopReason,'stop',result.errorMessage);assert.equal(f.requests[0].thinking_effort,undefined);
+});
+
+test('native MCP workers execute under their own owner and deliver durable results to main',{timeout:20000},async t=>{
+  let runtime:PocketRuntime,saved:any={},calls:any[]=[];const completed=Promise.withResolvers<void>();
+  const f=fixture(t,async(request,index)=>{
+    const prompt=request.messages[0].content.parts.at(-1),session=prompt.match(/exact pocket_session is ([a-f0-9-]+)/)[1];
+    if(index===1){
+      const result=await runtime.connector.call('authorized-phone','subagent',{pocket_session:session,pocket_request:'spawn-one',action:'spawn',spawns:[{agent:'phone-operator',label:'Read capabilities',prompt:'Read the actual phone capabilities receipt.'}]});
+      assert.ok(JSON.stringify(result).includes('conversationId'));return {text:'Worker dispatched.'};
+    }
+    if(index===2){
+      const result=await runtime.connector.call('authorized-phone','phone_capabilities',{pocket_session:session,pocket_request:'read-one'});
+      assert.ok(JSON.stringify(result).includes('actual-worker-receipt'));return {text:'Verified actual-worker-receipt'};
+    }
+    assert.ok(prompt.includes('actual-worker-receipt'));return {text:'Worker reported actual-worker-receipt'};
+  });
+  const previousFetch=globalThis.fetch;globalThis.fetch=f.fetcher;t.after(()=>{globalThis.fetch=previousFetch;});
+  runtime=new PocketRuntime({call(method,json){const args=JSON.parse(json);let result:any={};
+    if(method==='credentials.get')result={authMode:'chatgpt-desktop',endpoint:config.endpoint,model:config.model};
+    if(method==='connector.status')result={ready:true};
+    if(method==='store.load')result=saved;if(method==='store.save'){saved=structuredClone(args.state);result={saved:true};}
+    if(method==='autonomy.load')result=emptyAutonomy();if(method==='autonomy.status')result={enabled:false};if(method==='voice.preferences')result={mode:'text'};
+    if(method==='tool'){calls.push(args);assert.equal(args.name,'phone_capabilities');assert.notEqual(args.owner,'main');result={receipt:'actual-worker-receipt'};}
+    return JSON.stringify({ok:true,result});
+  },emit(json){const event=JSON.parse(json);if(event.type==='state'&&!event.state.active&&event.state.tasks?.some((task:any)=>task.status==='completed')&&event.state.messages.some((message:any)=>message.text?.includes('Worker reported actual-worker-receipt')))completed.resolve();}});
+  t.after(()=>{runtime.dispatch(JSON.stringify({action:'stop_all'}));runtime.dispatch(JSON.stringify({action:'prepare_shutdown'}));});
+  assert.equal(JSON.parse(runtime.dispatch(JSON.stringify({action:'send',text:'Delegate the read to a phone worker.'}))).ok,true);
+  await Promise.race([completed.promise,new Promise((_,reject)=>t.signal.addEventListener('abort',()=>reject(Error('Worker delivery timed out')),{once:true}))]);
+  assert.equal(calls.length,1);assert.equal(saved.delivered.length,1);
+  const worker=saved.workerMessages[calls[0].owner];assert.ok(worker.some((message:any)=>message.role==='toolResult'&&message.toolName==='phone_capabilities'));
+  assert.ok(saved.mainMessages.some((message:any)=>message.role==='toolResult'&&message.toolName==='subagent'));
 });
