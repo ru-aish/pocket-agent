@@ -51,12 +51,16 @@
         </service>
         <service android:name=".PocketVoiceSessionService" android:exported="true"
             android:permission="android.permission.BIND_VOICE_INTERACTION" />
+        <activity android:name=".ChatGptMcpActivity" android:exported="false" />
         <activity android:name=".JarvisEnrollmentActivity" android:exported="false" />
         <service android:name=".WakeWordService" android:exported="false" android:foregroundServiceType="microphone" />
         <service android:name=".VoiceListeningService" android:exported="false"
             android:foregroundServiceType="microphone|mediaPlayback" />
         <service android:name=".SubscriptionVoiceService" android:exported="false"
             android:foregroundServiceType="microphone|mediaPlayback" />
+        <service android:name=".ChatGptMcpService" android:exported="false" android:foregroundServiceType="specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="User-enabled authenticated ChatGPT MCP connection to this phone, with ongoing notification and Stop control" />
+        </service>
         <service android:name=".AgentService" android:exported="false" android:foregroundServiceType="specialUse">
             <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="User-started conversational agent completing explicitly requested background phone tasks, with ongoing notification and Stop all control" />
         </service>

@@ -1,6 +1,6 @@
 # Development APK: local MCP and authenticated ngrok diagnostics
 
-The signed Android workflow now emits **release** and **development** APKs from one source commit. Development uses the same `dev.pocket.agent` application ID and **distribution signing key** as release, so it can be installed over release and access the same app-private SQLite history. Development includes its own notification-backed server, ngrok JNI, and Settings entry; release does **not** include this server, activity, library, or ngrok native assets. Installing release over development removes the bridge code; stop the bridge first.
+The signed Android workflow now emits **release** and **development** APKs from one source commit. Development uses the same `dev.pocket.agent` application ID and **distribution signing key** as release, so it can be installed over release and access the same app-private SQLite history. Development includes its own notification-backed diagnostics server and Settings entry; release does **not** include this debugging server or activity. Both variants include the separate production ChatGPT MCP connector and its ARM64 ngrok tunnel. Installing release over development removes the debugging bridge code; stop the debugging bridge first.
 
 ## Downloads and schedule
 

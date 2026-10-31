@@ -220,7 +220,7 @@ public final class RuntimeHost implements AutoCloseable {
         String type = event.optString("type");
         if (type.equals("shutdown_ready")) {
             shutdownAcknowledged=true;shutdownClean=event.optBoolean("clean",false);
-        } else if (type.equals("dev_tool_result")) {
+        } else if ((type.equals("dev_tool_result") || type.equals("connector_result"))) {
             CompletableFuture<JSONObject> pending = debugPending.remove(event.optString("requestId"));
             if (pending != null) pending.complete(event.optJSONObject("result"));
             return;
@@ -325,6 +325,7 @@ public final class RuntimeHost implements AutoCloseable {
                     }
                     case "store.save.abort": abortDurableSave();result=true;break;
                     case "credentials.get": result = credentials.get(); break;
+                    case "connector.status": result = ChatGptMcpService.status(); break;
                     case "credentials.updateCodex": result = credentials.updateCodex(args); break;
                     default: throw new IllegalArgumentException("Unknown native method");
                 }
@@ -341,6 +342,28 @@ public final class RuntimeHost implements AutoCloseable {
                 RuntimeHost.this.emit(new JSONObject(eventJson));
             } catch (Exception error) { fail("Invalid runtime event", error); }
         }
+    }
+    CompletableFuture<org.json.JSONArray> connectorToolList() {
+        CompletableFuture<org.json.JSONArray> future=track(new CompletableFuture<>());
+        boolean accepted=handler.post(()->{
+            if(closed||runtime==null){future.completeExceptionally(new IllegalStateException("Runtime unavailable"));return;}
+            try{future.complete(new org.json.JSONArray(runtime.getExecutor("JSON.stringify(PocketAgent.connectorList())").executeString()));}
+            catch(Throwable error){handleRuntimeEntryFailure("MCP tool listing failed",error);future.completeExceptionally(error);}
+        });
+        if(!accepted)future.completeExceptionally(new IllegalStateException("Runtime thread unavailable"));return future;
+    }
+    CompletableFuture<JSONObject> connectorToolCall(String principal,String name,JSONObject args) {
+        CompletableFuture<JSONObject> future=track(new CompletableFuture<>());
+        boolean accepted=handler.post(()->{
+            if(closed||runtime==null){future.completeExceptionally(new IllegalStateException("Runtime unavailable"));return;}
+            String id=java.util.UUID.randomUUID().toString();debugPending.put(id,future);
+            try {
+                runtime.getExecutor("PocketAgent.connectorCall("+JSONObject.quote(id)+","+JSONObject.quote(principal)+","+JSONObject.quote(name)+",JSON.parse("+JSONObject.quote(args.toString())+"))").executeVoid();
+                runtime.await(V8AwaitMode.RunNoWait);schedulePump();
+                handler.postDelayed(()->{if(debugPending.remove(id)!=null)future.completeExceptionally(new java.util.concurrent.TimeoutException("MCP execution outcome unknown"));},35000);
+            } catch(Throwable error){debugPending.remove(id);handleRuntimeEntryFailure("MCP tool call failed",error);future.completeExceptionally(error);}
+        });
+        if(!accepted)future.completeExceptionally(new IllegalStateException("Runtime thread unavailable"));return future;
     }
     CompletableFuture<org.json.JSONArray> developmentToolList() {
         CompletableFuture<org.json.JSONArray> future = track(new CompletableFuture<>());

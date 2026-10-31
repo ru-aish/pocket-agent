@@ -124,6 +124,8 @@ jobs:
             # the privileged Shizuku shell UserService. Enable non-SDK access only on this
             # disposable emulator so instrumentation can reach that platform API too.
             adb shell settings put global hidden_api_policy 1
+            timeout 300 ./gradlew --no-daemon -PvoiceEmulatorTest :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=dev.pocket.agent.ChatGptMcpDeviceTest
+            cp -R app/build/outputs/androidTest-results/connected emulator-diagnostics/chatgpt-mcp-results
             timeout 300 ./gradlew --no-daemon -PvoiceEmulatorTest :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=dev.pocket.agent.PhoneTargetDeviceTest
             timeout 300 ./gradlew --no-daemon -PvoiceEmulatorTest :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=dev.pocket.agent.CrashResilienceDeviceTest
             adb shell settings delete global hidden_api_policy
@@ -146,6 +148,7 @@ jobs:
             emulator-diagnostics/emulator-results.json
             emulator-diagnostics/provider-results/
             emulator-diagnostics/codex-provider-results/
+            emulator-diagnostics/chatgpt-mcp-results/
           if-no-files-found: ignore
       - name: Collect provenance and signed APKs
         id: collect_apks
@@ -160,11 +163,11 @@ jobs:
           cp app/build/outputs/apk/development/app-universal-development.apk artifacts/Pocket-Agent-development-universal.apk
           python3 - <<'PY'
           from zipfile import ZipFile
-          for path, present in [('artifacts/Pocket-Agent-arm64.apk',False),('artifacts/Pocket-Agent-development-arm64.apk',True),('artifacts/Pocket-Agent-development-universal.apk',True)]:
+          for path, present in [('artifacts/Pocket-Agent-arm64.apk',True),('artifacts/Pocket-Agent-development-arm64.apk',True),('artifacts/Pocket-Agent-development-universal.apk',True)]:
               with ZipFile(path) as archive:
                   actual='lib/arm64-v8a/libngrok_java.so' in archive.namelist()
                   assert actual is present,(path,actual)
-          print('Development-only ARM64 ngrok JNI packaging verified')
+          print('Production and development ARM64 ngrok JNI packaging verified')
           PY
           cp app/build/outputs/apk/androidTest/release/*.apk artifacts/Pocket-Agent-tests.apk
           cp app/build/outputs/apk/androidTest/development/*.apk artifacts/Pocket-Agent-development-tests.apk

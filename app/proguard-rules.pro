@@ -113,3 +113,9 @@
 
 # Release device coverage checks timer request coalescing under a superseded attempt.
 -keep class dev.pocket.agent.AutonomyScheduler$ArmRequests { *; }
+
+# The production MCP connector uses the ngrok Java/JNI ABI.
+-keep class com.ngrok.** { *; }
+-keep class dev.pocket.agent.ConnectorAuth { *; }
+-keep class dev.pocket.agent.ConnectorAuth$* { *; }
+-keep class dev.pocket.agent.ChatGptMcpServer { *; }

@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {Agent} from '@earendil-works/pi-agent-core';
 import {Type} from 'typebox';
-import {DesktopCdp,desktopEndpoint,desktopModels,desktopPrompt,parseDesktopAnswer} from '../src/chatgpt-desktop.js';
+import {DesktopCdp,desktopEndpoint,desktopModels,desktopPrompt} from '../src/chatgpt-desktop.js';
+import {DesktopToolRouter} from '../src/desktop-connector.js';
 import {makeStream,modelFor} from '../src/provider.js';
 import {discoverProviderModels} from '../src/model-catalog.js';
 
@@ -16,20 +17,17 @@ test('desktop accepts only tailnet or loopback CDP origins and needs no API key'
   assert.throws(()=>modelFor({...config,endpoint:undefined},{}),/Tailscale/);
 });
 
-test('desktop tool protocol rejects prose, unknown tools, malformed arguments and excessive calls',{timeout:20000},()=>{
+test('native tool prompts require an active MCP session and preserve image/system context',()=>{
   const tools=[{name:'phone_capabilities',description:'Read capabilities',parameters:Type.Object({})}];
-  assert.deepEqual(parseDesktopAnswer('{"text":"Checking","toolCalls":[{"name":"phone_capabilities","arguments":{}}]}',tools).toolCalls[0].arguments,{});
-  for(const text of ['Done','```json\n{}\n```','{"text":"done","toolCalls":[{"name":"shell","arguments":{}}]}','{"text":"done","toolCalls":[{"name":"phone_capabilities","arguments":[]}]}',JSON.stringify({text:'',toolCalls:Array(33).fill({name:'phone_capabilities',arguments:{}})})])assert.throws(()=>parseDesktopAnswer(text,tools));
-  assert.deepEqual(parseDesktopAnswer('```json\n{"text":"Read_fixture","toolCalls":[]}\n```',tools),{text:'Read_fixture',toolCalls:[]});
-  const prompt=desktopPrompt({systemPrompt:'Private instructions',tools,messages:[{role:'user',content:[{type:'image',data:'eA==',mimeType:'image/png'},{type:'text',text:'Read the code.'}],timestamp:1}]});
+  assert.throws(()=>desktopPrompt({messages:[],tools}),/Enable ChatGPT MCP/);
+  const prompt=desktopPrompt({systemPrompt:'Private instructions',tools,messages:[{role:'user',content:[{type:'image',data:'eA==',mimeType:'image/png'},{type:'text',text:'Read the code.'}],timestamp:1}]},'test-session');
+  assert.ok(prompt.text.includes('exact pocket_session is test-session'));assert.ok(prompt.text.includes('Use real MCP tool calls'));assert.ok(!prompt.text.includes('"toolCalls":'));
   const normalized=desktopPrompt({messages:[{role:'system',content:'Resolved policy',toolsAdded:tools,timestamp:0},{role:'system',content:'New policy section',toolsRemoved:[{name:'phone_capabilities'}],timestamp:1}]});
   assert.deepEqual(normalized.tools,[]);assert.ok(normalized.text.includes('Resolved policy'));assert.ok(normalized.text.includes('New policy section'));
-  assert.ok(prompt.text.endsWith('Return only the fenced JSON object described above.'));
-  assert.ok(!normalized.text.includes('put requests in toolCalls'));
   assert.equal(prompt.images.length,1);assert.ok(prompt.text.includes('Private instructions'));assert.ok(prompt.text.includes('[Attached image 1]'));assert.ok(!prompt.text.includes('eA=='));
 });
 
-function fixture(t:any,answer:(request:any,index:number)=>{text:string;toolCalls:any[]}|null,dropAtStart=false,nativeError=false,pauseUntilRebind=false,options:any={}) {
+function fixture(t:any,answer:(request:any,index:number)=>any,dropAtStart=false,nativeError=false,pauseUntilRebind=false,options:any={}) {
   const started=Promise.withResolvers<void>(),modelsStarted=Promise.withResolvers<void>();const closeWaiters:Array<()=>void>=[];
   const previous=globalThis.WebSocket;
   const sockets=new Set<FakeSocket>();const requests:any[]=[];let stops=0,connections=0;let deferredFinish:(()=>void)|undefined;
@@ -40,9 +38,10 @@ function fixture(t:any,answer:(request:any,index:number)=>{text:string;toolCalls
     startCompletionStream:(args:any)=>{
       requests.push(args.request);started.resolve();const response=answer(args.request,requests.length);
       if(dropAtStart&&requests.length===1)for(const socket of [...sockets])socket.close();
-      if(response)queueMicrotask(()=>{
+      if(response)queueMicrotask(async()=>{
+        const resolved=await response;
         if(nativeError){args.onError({});return;}
-        const text=args.request.messages[0].content.parts.at(-1).includes('Return your answer directly as text.')?response.text:JSON.stringify(response),conversation_id='fixture-conversation-'+requests.length;
+        const text=resolved.text,conversation_id='fixture-conversation-'+requests.length;
         for(const [index,block] of (options.fragments??[text]).entries())for(const length of [Math.floor(block.length/2),block.length])args.onUpdate({conversation_id,message:{id:'fixture-answer-'+index,author:{role:'assistant'},channel:'final',recipient:'all',content:{content_type:'text',parts:[block.slice(0,length)]},status:'finished_successfully',end_turn:length===block.length}});
         if(pauseUntilRebind)deferredFinish=()=>args.onComplete({conversation_id});else args.onComplete({conversation_id});
       });
@@ -78,21 +77,34 @@ test('desktop discovery uses the native catalog with standard and extended reaso
   assert.equal(models.length,1);assert.equal(models[0].id,'gpt-6-thinking');assert.deepEqual(models[0].supportedReasoningLevels,['standard','extended']);
 });
 
-test('Pi executes a desktop-requested tool once and supplies its actual result to the next inference',{timeout:20000},async t=>{
-  let executed=0;
-  const f=fixture(t,(_request,index)=>index===1?{text:'Checking capabilities.',toolCalls:[{name:'phone_capabilities',arguments:{}}]}:{text:'Verified fixture-ready.',toolCalls:[]});
-  const model=modelFor(config,{}),source=makeStream(config,{},'main');const events:any[]=[];
-  const agent=new Agent({streamFn:(m,c,o)=>source(m,c,{...o,fetch:f.fetcher,signal:t.signal}),initialState:{model,tools:[{name:'phone_capabilities',label:'Capabilities',description:'Read capabilities',parameters:Type.Object({}),execute:async()=>{executed++;return {content:[{type:'text',text:'fixture-ready'}],details:{}};}}]}});
-  agent.subscribe(e=>events.push(e));await agent.prompt('Read capabilities and report the actual result.');
-  assert.equal(executed,1,JSON.stringify(agent.state.messages.at(-1)));assert.equal(f.requests.length,2);
-  assert.equal(f.requests[0].thinking_effort,'extended');assert.ok(JSON.stringify(f.requests[1]).includes('fixture-ready'));
-  assert.equal(agent.state.messages.at(-1)?.stopReason,'stop');assert.ok(events.some(e=>e.type==='message_update'));
+test('native MCP executes a worker tool once inside the same ChatGPT inference', {timeout:20000},async t=>{
+  let executed=0,closed=false;
+  const tool={name:'phone_capabilities',label:'Capabilities',description:'Read capabilities',parameters:Type.Object({}),execute:async()=>{executed++;return {content:[{type:'text',text:'fixture-ready'}],details:{}};}};
+  const router=new DesktopToolRouter({tools:()=>[tool],persist:()=>true,record:()=>{}});
+  const connector={open:(...args:Parameters<typeof router.open>)=>{const scope=router.open(...args);return {...scope,close:()=>{closed=true;scope.close();}};}};
+  const f=fixture(t,async request=>{
+    const session=request.messages[0].content.parts.at(-1).match(/exact pocket_session is ([a-f0-9-]+)/)[1];
+    const input={pocket_session:session,pocket_request:'call-1'};
+    const result=await router.call('chatgpt-profile','phone_capabilities',input);
+    await router.call('chatgpt-profile','phone_capabilities',input);
+    return {text:'Verified '+result.content[0].text};
+  });
+  const model=modelFor(config,{}),source=makeStream(config,{},'worker',undefined,undefined,undefined,connector);
+  const agent=new Agent({streamFn:(m,c,o)=>source(m,c,{...o,fetch:f.fetcher,signal:t.signal}),initialState:{model,tools:[tool]}});
+  await agent.prompt('Read capabilities and report the actual result.');
+  assert.equal(executed,1);assert.equal(f.requests.length,1);assert.equal(f.requests[0].thinking_effort,'extended');
+  assert.equal(agent.state.messages.at(-1)?.stopReason,'stop');assert.equal((agent.state.messages.at(-1) as any).content[0].text,'Verified fixture-ready');
+  await f.whenClosed();assert.equal(closed,true);
 });
 
-test('invalid desktop output ends in error without executing any tools or resending',{timeout:20000},async t=>{
-  const f=fixture(t,()=>({text:'Bad call',toolCalls:[{name:'not_granted',arguments:{}}]}));
-  const source=makeStream(config,{},'worker');const result=await (await source(modelFor(config,{}),{messages:[],tools:[{name:'allowed',description:'Granted tool',parameters:Type.Object({})}]},{fetch:f.fetcher,signal:t.signal})).result();
-  assert.equal(result.stopReason,'error');assert.equal(f.requests.length,1);assert.equal(result.content.some(p=>p.type==='toolCall'),false);
+test('assistant JSON text cannot execute tools and a missing MCP session fails before submission',{timeout:20000},async t=>{
+  const text='{"text":"Bad call","toolCalls":[{"name":"not_granted","arguments":{}}]}';
+  const f=fixture(t,()=>({text}));
+  const source=makeStream(config,{},'worker');
+  const result=await(await source(modelFor(config,{}),{messages:[]},{fetch:f.fetcher,signal:t.signal})).result();
+  assert.equal(result.stopReason,'stop');assert.equal((result.content[0] as any).text,text);assert.equal(result.content.some(p=>p.type==='toolCall'),false);
+  const blocked=await(await source(modelFor(config,{}),{messages:[],tools:[{name:'allowed',description:'Granted',parameters:Type.Object({})}]},{fetch:f.fetcher,signal:t.signal})).result();
+  assert.equal(blocked.stopReason,'error');assert.equal(f.requests.length,1);
 });
 
 test('abort stops only its owned desktop request and releases the connection',{timeout:20000},async t=>{
@@ -144,10 +156,10 @@ test('a CDP command timeout marks the transport unavailable for request reconcil
 });
 
 
-test('native final continuation messages are merged before protocol parsing',{timeout:20000},async t=>{
-  const f=fixture(t,()=>({text:'unused',toolCalls:[]}),false,false,false,{fragments:['```json\n{"text":"Ready",','"toolCalls":[]}\n```']});
-  const result=await(await makeStream(config,{},'continuation')(modelFor(config,{}),{messages:[],tools:[{name:'allowed',description:'Allowed',parameters:Type.Object({})}]},{fetch:f.fetcher,signal:t.signal})).result();
-  assert.equal(result.stopReason,'stop',result.errorMessage);assert.equal(result.content.find(part=>part.type==='text')?.text,'Ready');
+test('native final continuation messages are merged as ordinary text',{timeout:20000},async t=>{
+  const f=fixture(t,()=>({text:'unused'}),false,false,false,{fragments:['Ready.','Finished.']});
+  const result=await(await makeStream(config,{},'continuation')(modelFor(config,{}),{messages:[]},{fetch:f.fetcher,signal:t.signal})).result();
+  assert.equal(result.stopReason,'stop',result.errorMessage);assert.ok((result.content[0] as any).text.includes('Ready.'));assert.ok((result.content[0] as any).text.includes('Finished.'));
 });
 
 test('abort reconnects only to cancel the owned request after a dropped socket',{timeout:20000},async t=>{
@@ -180,13 +192,4 @@ test('unverified API-style default efforts are omitted from native requests',{ti
   const f=fixture(t,()=>({text:'OK',toolCalls:[]}));
   const result=await(await makeStream({...config,reasoningEffort:'low'},{},'main')(modelFor(config,{}),{messages:[]},{fetch:f.fetcher,signal:t.signal})).result();
   assert.equal(result.stopReason,'stop',result.errorMessage);assert.equal(f.requests[0].thinking_effort,undefined);
-});
-
-
-test('native Markdown escapes are decoded only outside JSON strings',()=>{
-  const captured="\\`\\`\\`json\n{\n  \"text\": \"8b0800be-479e-4c0c-bf3c-f199df791298\",\n  \"toolCalls\": \\[\\]\n}\n\\`\\`\\`";
-  assert.equal(parseDesktopAnswer(captured,[]).text,'8b0800be-479e-4c0c-bf3c-f199df791298');
-  const requested="\\`\\`\\`json\n{\"text\": \"Checking\", \"toolCalls\": \\\\[{\"name\": \"read_fixture\", \"arguments\": {\"path\": \"C:\\\\[keep]\\\\file.json\", \"query\": \"literal \\\\n and [brackets]\"}}\\\\]}\n\\`\\`\\`";
-  const tools=[{name:'read_fixture',description:'Read fixture',parameters:Type.Object({path:Type.String(),query:Type.String()})}];
-  assert.deepEqual(parseDesktopAnswer(requested,tools).toolCalls,[{"name": "read_fixture", "arguments": {"path": "C:\\[keep]\\file.json", "query": "literal \\n and [brackets]"}}]);
 });

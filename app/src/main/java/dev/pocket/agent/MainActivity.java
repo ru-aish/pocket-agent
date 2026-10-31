@@ -886,6 +886,11 @@ public final class MainActivity extends androidx.activity.ComponentActivity impl
             });});
     }
     private void webRequest(String path,JSONObject body,PocketWebUi.Reply reply) throws Exception {
+        if(path.startsWith("/native/chatgpt-mcp/")){
+            String action=path.substring("/native/chatgpt-mcp/".length());
+            if(action.equals("copy")){reply.complete(ChatGptMcpSettings.handle(this,action,body),null);return;}
+            uiReads.submit(()->{try{reply.complete(ChatGptMcpSettings.handle(this,action,body),null);}catch(Exception error){reply.complete(null,error instanceof IllegalArgumentException||error instanceof IllegalStateException?error.getMessage():"Could not update ChatGPT MCP. Check the phone connection and try again.");}});return;
+        }
         CredentialStore credentials=new CredentialStore(this);
         switch(path) {
             case "/native/snapshot" -> {
@@ -1088,7 +1093,7 @@ public final class MainActivity extends androidx.activity.ComponentActivity impl
             activitySection(body, "Your assistant"); settingsRow(body, "AI & model", "Provider connection, sign-in, models & reasoning", this::settings);
             settingsRow(body, "Personal instructions", "Tone, priorities and preferences", () -> phonePage("Personal instructions", page -> { EditText value = field(page, "Instructions for Pocket", state.optString("personalInstructions")); value.setSingleLine(false); value.setMinLines(6); value.setGravity(Gravity.TOP); page.addView(button("Save instructions", () -> { String prompt = value.getText().toString().trim(); if (prompt.length() > 50000) { toast("Instructions must be 50000 characters or fewer"); return; } savePersonalInstructions(prompt,(result,error)->toast(error==null?"Instructions saved":error)); })); }));
             settingsRow(body, "Voice & wake word", "System speech, Groq Whisper, Deepgram & Codex voice", this::voiceSettingsPage);
-            activitySection(body, "On your phone"); settingsRow(body, "Phone access", "Permissions, Accessibility & virtual displays", this::phoneAccessPage); settingsRow(body, "Connections", "Remote MCP servers & tool discovery", this::mcpSettings); settingsRow(body, "Background work", "Schedules, approvals and run history", this::autonomyActivity);
+            activitySection(body, "On your phone"); settingsRow(body, "Phone access", "Permissions, Accessibility & virtual displays", this::phoneAccessPage); settingsRow(body, "Connections", "Remote MCP servers & tool discovery", this::mcpSettings); settingsRow(body,"ChatGPT MCP","Connector URL & pairing code",()->startActivity(new Intent(this,ChatGptMcpActivity.class))); settingsRow(body, "Background work", "Schedules, approvals and run history", this::autonomyActivity);
             activitySection(body, "Appearance"); Spinner theme = new Spinner(this); String[] labels = {"System", "Warm charcoal", "Soft paper"}; String[] values = {"system", "dark", "light"}; theme.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, labels)); String savedTheme = getSharedPreferences("pocket-ui", 0).getString("theme", "system"); theme.setSelection(java.util.Arrays.asList(values).indexOf(savedTheme)); body.addView(theme); theme.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() { public void onNothingSelected(AdapterView<?> parent) { } public void onItemSelected(AdapterView<?> parent, View view, int position, long id) { if (!values[position].equals(getSharedPreferences("pocket-ui", 0).getString("theme", "system"))) { getSharedPreferences("pocket-ui", 0).edit().putString("theme", values[position]).apply(); recreate(); } } });
             settingsRow(body, "Advanced settings", "All original connection and voice controls", () -> { showAllSettings = true; settings(); });
         });
@@ -1478,6 +1483,7 @@ public final class MainActivity extends androidx.activity.ComponentActivity impl
         endpoint.addTextChangedListener(connectionChanges);
         secret.addTextChangedListener(connectionChanges);
         final int aiEnd = panel.getChildCount();
+        panel.addView(button("ChatGPT MCP",()->startActivity(new Intent(this,ChatGptMcpActivity.class))));
         if (BuildConfig.DEVELOPMENT_TOOLS) panel.addView(button("Development MCP and ngrok", () ->
             startActivity(new Intent().setClassName(this, "dev.pocket.agent.DevToolsActivity"))));
         panel.addView(button("Accessibility settings", () -> startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))));

@@ -7,6 +7,7 @@ import { streamSimple as codexStreamSimple } from '@earendil-works/pi-ai/api/ope
 import { AssistantMessageEventStream } from '@earendil-works/pi-ai/utils/event-stream';
 import { SCRIPT_MODEL, scriptedStream } from './scripted.js';
 import {CODEX_RESPONSES_URL,ensureCodexCredentials,redactProviderSecrets,type CodexCredentialInput} from './codex-auth.js';
+import type {DesktopConnector} from './desktop-connector.js';
 import {DESKTOP_THINKING_EFFORTS,desktopEndpoint,desktopStream} from './chatgpt-desktop.js';
 import {codexFailure} from './codex-errors.js';
 export {registerCodexCredentialUpdater,redactProviderSecrets} from './codex-auth.js';
@@ -237,7 +238,7 @@ function fixedCodexFetch(fetcher: typeof fetch, budget: {attempts:number;error?:
   }) as typeof fetch;
 }
 
-export function makeStream(config: ProviderConfig, credentials: ProviderCredentials = {}, owner: any, reasoningOverride?: ReasoningEffort, supportedReasoning?: readonly ReasoningEffort[], modelSource = credentials.modelSource): StreamFn {
+export function makeStream(config: ProviderConfig, credentials: ProviderCredentials = {}, owner: any, reasoningOverride?: ReasoningEffort, supportedReasoning?: readonly ReasoningEffort[], modelSource = credentials.modelSource,connector?:DesktopConnector): StreamFn {
   if (config.mode === 'scripted') return scriptedStream(owner);
   return async(_model, context, options)=>{
     let model: ProviderModel | undefined;
@@ -250,7 +251,7 @@ export function makeStream(config: ProviderConfig, credentials: ProviderCredenti
         const requested=reasoningOverride??config.reasoningEffort;
         const levels=supportedReasoning??(credentials.reasoningEffortModel===model.id?credentials.reasoningEfforts:undefined);
         const effort=levels ? levels.includes(requested??'')?requested:levels.includes('standard')?'standard':levels[0] : requested;
-        return desktopStream(model,context,owner,effort,{...options,effortVerified:levels!==undefined});
+        return desktopStream(model,context,owner,effort,{...options,effortVerified:levels!==undefined,connector});
       }
       let apiKey = credentials.apiKey;
       if (account) apiKey = (await ensureCodexCredentials(credentials,{signal:options?.signal,fetch:options?.fetch})).accessToken;

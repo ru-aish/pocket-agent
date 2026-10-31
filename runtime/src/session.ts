@@ -1,3 +1,4 @@
+import type {DesktopConnector} from './desktop-connector.js';
 import { Agent } from '@earendil-works/pi-agent-core';
 import { makeStream, modelFor, type ReasoningEffort } from './provider.js';
 
@@ -10,14 +11,14 @@ export class MobileSession {
   private steering:string[]=[];
   private turns=0;
   private calls=0;
-  constructor(readonly owner:string, config:any, credentials:any, tools:any[], messages:any[]=[] ,systemPrompt='', selectedModel?:string, reasoning?:ReasoningEffort, supportedReasoning?:readonly ReasoningEffort[]) {
+  constructor(readonly owner:string, config:any, credentials:any, tools:any[], messages:any[]=[] ,systemPrompt='', selectedModel?:string, reasoning?:ReasoningEffort, supportedReasoning?:readonly ReasoningEffort[],readonly connector?:DesktopConnector) {
     const current=modelFor(config,credentials);
     const selected=selectedModel===`${current.provider}/${current.id}`
       ? current : selectedModel ? modelFor(config,credentials,selectedModel) : current;
     // An explicit worker model is a catalog selection even when its ID matches
     // the manually configured main model. Omitted models inherit main's source.
     this.agent=new Agent({streamFn:makeStream(config,credentials,owner,reasoning,supportedReasoning,
-      selectedModel === undefined ? credentials.modelSource : 'catalog'),initialState:{
+      selectedModel === undefined ? credentials.modelSource : 'catalog',connector),initialState:{
       model:selected,systemPrompt,tools,messages,
     },toolExecution:'sequential',sessionId:owner,
       beforeToolCall:()=>{if(++this.calls>MOBILE_SESSION_BUDGET.toolCallsPerGeneration)throw new Error(`Mobile tool-call budget reached (${MOBILE_SESSION_BUDGET.toolCallsPerGeneration} per generation); saved context was retained`);return undefined;},

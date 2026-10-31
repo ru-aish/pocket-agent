@@ -1,3 +1,4 @@
+import {DesktopToolRouter} from './desktop-connector.js';
 import { randomUUID } from 'node:crypto';
 import {validateConnection} from './connection-validation.js';
 import {AutonomyEngine,autonomyTools,AUTONOMY_TOOL_NAMES,type AutonomousStartResult} from './autonomy.js';
@@ -40,6 +41,18 @@ const normalizeMode=(mode:string)=>mode==='api-key'?'openai':mode==='codex-relay
 export interface NativeBridge {call(method:string,argsJson:string):string;emit(eventJson:string):void}
 export class PocketRuntime {
   readonly registry=new AgentRegistry();
+  readonly connector=new DesktopToolRouter({
+    tools:owner=>owner==='*'?[...new Map([...(this.main?.agent.state.tools??[]),...[...this.sessions.values()].flatMap(session=>session.agent.state.tools)].map(tool=>[tool.name,tool])).values()]:(owner==='main'?this.main:this.sessions.get(owner))?.agent.state.tools??[],
+    persist:()=>this.save(),
+    record:(owner,name,callId,args,result)=>{
+      const session=owner==='main'?this.main:this.sessions.get(owner);
+      if(!session)return;
+      this.emit({type:'log',owner,tool:name,message:result?'Tool finished':'Tool started',transport:'chatgpt-mcp'});
+      if(result)session.agent.state.messages.push({role:'toolResult',toolCallId:callId,toolName:name,content:result.content??[],isError:result.isError===true,timestamp:Date.now()} as any);
+      else {const model=session.agent.state.model;session.agent.state.messages.push({role:'assistant',api:model.api,provider:model.provider,model:model.id,content:[{type:'toolCall',id:callId,name,arguments:args}],stopReason:'toolUse',usage:{input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}},timestamp:Date.now()} as any);}
+      this.coalesce();
+    },
+  });
   readonly displayPool=new DisplayPool(3);
   private readonly displayIds=new Map<string,number>();
   private readonly nativeDisplays=new Set<string>();
@@ -114,6 +127,7 @@ export class PocketRuntime {
     void this.refreshMcpTools();
     this.runtime=new SubagentRuntime(this.registry,limits.maxExecuting,this.execute as any,limits.maxConversations);
     const saved=this.call('store.load',{}) ?? {};
+    this.connector.restore(saved.connectorReceipts);
     const freshMainRequested=saved.freshMainRequested===true;
     this.mainThreadId=!freshMainRequested&&typeof saved.mainThreadId==='string'&&/^[a-f0-9-]{36}$/.test(saved.mainThreadId)
       ?saved.mainThreadId:!freshMainRequested&&Array.isArray(saved.mainMessages)&&saved.mainMessages.length>0
@@ -258,7 +272,7 @@ export class PocketRuntime {
     const savedProof=this.workerReasoningProofs.get(owner);
     const supportedReasoning=catalogReasoning??(savedProof?.model===selectedModelId?savedProof.levels:undefined);
     const reasoning=normalizeReasoningEffort(parent?.requestedConfig?.thinking??this.config.reasoningEffort);
-    const session=new MobileSession(owner,this.config,this.credentials,[],restored,systemPrompt,selectedModel,reasoning,supportedReasoning);
+    const session=new MobileSession(owner,this.config,this.credentials,[],restored,systemPrompt,selectedModel,reasoning,supportedReasoning,{open:(...args)=>{if(!this.call('connector.status',{})?.ready)throw Error('Start ChatGPT MCP in Settings and authorize its connection in ChatGPT.');return this.connector.open(...args);}});
     this.configureSessionTools(session,parent);
     session.subscribe(event=>{
       if(event.type==='message_end')this.coalesce();
@@ -449,6 +463,10 @@ export class PocketRuntime {
       }
     } catch(e){this.reportError(e);}
     finally {this.deliveryTransaction=false;this.pumping=false;this.publish();}
+  }
+  connectorToolList():any[]{return this.connector.list();}
+  connectorToolCall(requestId:string,principal:string,name:string,args:any):void {
+    void this.connector.call(principal,name,args).then(result=>this.emit({type:'connector_result',requestId,result}),error=>this.emit({type:'connector_result',requestId,result:{isError:true,content:[{type:'text',text:this.sanitize(String(error?.message??error))}]}})).finally(()=>this.publish());
   }
   private devTools?:any[];
   debugToolList():any[] {
@@ -677,7 +695,7 @@ export class PocketRuntime {
           const reasoning=normalizeReasoningEffort(sameProvider?c.requestedConfig?.thinking??this.config.reasoningEffort:this.config.reasoningEffort);
           const proof=this.workerReasoningProofs.get(c.conversationId);
           session.agent.streamFunction=makeStream(this.config,this.credentials,session.owner,reasoning,
-            proof?.model===selected.id?proof.levels:undefined,requested===undefined?this.credentials.modelSource:'catalog');
+            proof?.model===selected.id?proof.levels:undefined,requested===undefined?this.credentials.modelSource:'catalog',session.connector);
           session.agent.state.model=selected;
         }
       } else if(cmd.action==='set_personal_instructions') {
@@ -847,7 +865,7 @@ export class PocketRuntime {
       // Queued workers may not have a session yet, but their first checkpoint must already own a unique archive scope.
       for(const worker of workers)if(!this.workerHistoryOwners.has(worker.conversationId))
         this.workerHistoryOwners.set(worker.conversationId,worker.conversationId+'@'+randomUUID());
-      let state:any={version:1,mainThreadId:this.mainThreadId,workerHistoryOwners:Object.fromEntries(this.workerHistoryOwners),workerMainThreads:Object.fromEntries(this.workerMainThreads),config:this.config,providerRevision:this.credentials.providerRevision,busy:this.busy,lastError:this.lastError,mainPaused:this.mainPaused,totalStarts:this.totalStarts,personalInstructions:this.personalInstructions,mainMessages:stripImages(this.main.messages),workers,workerMessages,workerReasoningProofs:Object.fromEntries(this.workerReasoningProofs),inbox:this.inbox,delivered:[...this.delivered],mainTurns:this.mainTurns,observationPending:this.observationPending};
+      let state:any={version:1,mainThreadId:this.mainThreadId,workerHistoryOwners:Object.fromEntries(this.workerHistoryOwners),workerMainThreads:Object.fromEntries(this.workerMainThreads),config:this.config,providerRevision:this.credentials.providerRevision,busy:this.busy,lastError:this.lastError,mainPaused:this.mainPaused,totalStarts:this.totalStarts,personalInstructions:this.personalInstructions,mainMessages:stripImages(this.main.messages),connectorReceipts:this.connector.snapshot(),workers,workerMessages,workerReasoningProofs:Object.fromEntries(this.workerReasoningProofs),inbox:this.inbox,delivered:[...this.delivered],mainTurns:this.mainTurns,observationPending:this.observationPending};
       let serialized=this.redactCheckpoint(state);
       if(utf8Bytes(serialized)>MAX_DURABLE_CHECKPOINT_BYTES) {
         const compactWorkers:any={};
@@ -881,7 +899,7 @@ export class PocketRuntime {
   }
   state():any {
     const tasks=this.runtime.listConversations().map(c=>{const g=c.generations.at(-1)!;return {...c,generation:g.generation,status:g.status.kind==='done'?({error:'failed',aborted:'cancelled',skipped:'cancelled'} as any)[g.status.outcome]??g.status.outcome:g.status.kind,output:g.status.kind==='done'?g.status.output:undefined,display:this.displayStatus(c.conversationId)};});
-    const otherActive=this.connectionTests>0||Boolean(this.titleRequest)||this.discoveringModels||hasPendingCodexRefresh(this.credentials)||this.observing||this.busy||tasks.some(t=>t.currentGeneration||t.isStopping)||(!this.mainPaused&&this.inbox.length>0)||Boolean(this.pendingSave);
+    const otherActive=this.connector.active||this.connectionTests>0||Boolean(this.titleRequest)||this.discoveringModels||hasPendingCodexRefresh(this.credentials)||this.observing||this.busy||tasks.some(t=>t.currentGeneration||t.isStopping)||(!this.mainPaused&&this.inbox.length>0)||Boolean(this.pendingSave);
     const cleanupOnly=this.releaseRetries.size>0&&!otherActive;
     const cleanupWakeMs=cleanupOnly?Math.min(...[...this.releaseRetries.values()].map(retry=>Math.max(1,(retry.dueAt??Date.now()+200)-Date.now()))):0;
     return {messages:textMessages(this.main.messages,this.sanitize),mainThreadId:this.mainThreadId,tasks:tasks.map(task=>({...task,mainThreadId:this.workerMainThreads.get(task.conversationId)})),busy:this.busy,lastError:this.lastError,active:this.releaseRetries.size>0||otherActive,cleanupOnly,cleanupWakeMs,mainPaused:this.mainPaused,mainInterrupted:this.mainInterrupted,provider:{...this.config},mainTurns:this.mainTurns,personalInstructions:this.personalInstructions,
